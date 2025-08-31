@@ -12,7 +12,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM w_param, LPARAM l
             break;
 
         default:
-            result = DefWindowProcA(window, message, w_param, l_param);
+            result = DefWindowProc(window, message, w_param, l_param);
             break;
     }
 
@@ -24,19 +24,19 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
         .lpfnWndProc = window_proc,
         .hInstance = instance,
         // TODO(ryan): Better window class name
-        .lpszClassName = "GameWindowClass",
+        .lpszClassName = TEXT("GameWindowClass"),
     };
-    if (!RegisterClassA(&game_window_class)) {
-        MessageBoxA(NULL, "Failed to register window class", "Error", MB_OK);
+    if (!RegisterClass(&game_window_class)) {
+        MessageBox(NULL, TEXT("Failed to register window class"), TEXT("Error"), MB_OK);
         return 1;
     }
 
     // TODO(ryan): check if there are different options we want to use for anything
-    HWND game_window = CreateWindowExA(
+    HWND game_window = CreateWindowEx(
         0,
         game_window_class.lpszClassName,
         // TODO(ryan): different name
-        "Game From Scratch",
+        TEXT("Game From Scratch"),
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
         NULL,
@@ -45,7 +45,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
         NULL
     );
     if (game_window == NULL) {
-        MessageBoxA(NULL, "Failed to create game window", "Error", MB_OK);
+        MessageBox(NULL, TEXT("Failed to create game window"), TEXT("Error"), MB_OK);
         return 1;
     }
     ShowWindow(game_window, cmd_show);
@@ -56,7 +56,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     game_is_running = true;
     while (game_is_running) {
         MSG window_message;
-        while (PeekMessageA(&window_message, 0, 0, 0, PM_REMOVE)) {
+        while (PeekMessage(&window_message, 0, 0, 0, PM_REMOVE)) {
             switch (window_message.message) {
                 case WM_QUIT:
                     game_is_running = false;
@@ -64,13 +64,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
 
                 default:
                     TranslateMessage(&window_message);
-                    DispatchMessageA(&window_message);
+                    DispatchMessage(&window_message);
                     break;
             }
         }
     }
 
-    MessageBoxA(NULL, "Game is shutting down", "Info", MB_OK);
+    MessageBox(NULL, TEXT("Game is shutting down"), TEXT("Info"), MB_OK);
 
     return 0;
 }
