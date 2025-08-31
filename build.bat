@@ -25,6 +25,6 @@ REM     -FC -Od -Zi
 cl ..\platform_win32.cpp -Fmplatform_win32.map ^
     -D_UNICODE ^
     -MTd -nologo -fp:fast -Gm- -GR- -EHa- -Fpermissive -W4 -WX -wd4100 -Od -Oi -std:c++20 -Zi -FC ^
-    /link -incremental:no -opt:ref user32.lib
+    /link -incremental:no -opt:ref user32.lib gdi32.lib
 
 popd

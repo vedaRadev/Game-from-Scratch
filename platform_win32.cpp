@@ -68,6 +68,14 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
                     break;
             }
         }
+
+        RECT client_rect;
+        GetClientRect(game_window, &client_rect);
+        int client_width = client_rect.right - client_rect.left;
+        int client_height = client_rect.bottom - client_rect.top;
+        HDC device_context = GetDC(game_window);
+        PatBlt(device_context, 0, 0, client_width, client_height, BLACKNESS);
+        ReleaseDC(game_window, device_context);
     }
 
     MessageBox(NULL, TEXT("Game is shutting down"), TEXT("Info"), MB_OK);
