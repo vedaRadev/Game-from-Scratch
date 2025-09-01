@@ -18,13 +18,25 @@ REM /EHa- - disable async exception handling (specifically C++'s structured exce
 
 REM WARNINGS
 REM 4100: unreferenced formal parameter
+REM 4101: unreferenced local variable
 
-REM debug build
+REM ==================================================
+REM DEBUG BUILD
 REM specifically for a release build we'd want to look at changing/removing the following:
 REM     -FC -Od -Zi
+
+set COMMON_COMPILER_FLAGS=-MTd -nologo -fp:fast -Gm- -GR- -EHa- -Fpermissive- -W4 -WX -wd4100 -wd4101 -Od -Oi -std:c++20 -Zi -FC
+set COMMON_LINKER_FLAGS=-incremental:no -opt:ref
+
+REM building the game as a dynamic library
+cl ..\game.cpp -Fmgame.map -LD ^
+    %COMMON_COMPILER_FLAGS% ^
+    /link %COMMON_LINKER_FLAGS% -EXPORT:update_and_render
+
+REM building the platform layer as an executable
 cl ..\platform_win32.cpp -Fmplatform_win32.map ^
     -D_UNICODE ^
-    -MTd -nologo -fp:fast -Gm- -GR- -EHa- -Fpermissive- -W4 -WX -wd4100 -Od -Oi -std:c++20 -Zi -FC ^
-    /link -incremental:no -opt:ref user32.lib gdi32.lib
+    %COMMON_COMPILER_FLAGS% ^
+    /link %COMMON_LINKER_FLAGS% user32.lib gdi32.lib
 
 popd
