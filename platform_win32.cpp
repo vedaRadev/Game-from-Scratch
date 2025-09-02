@@ -12,6 +12,7 @@ struct Win32OffscreenBuffer {
 
 struct GameCode {
     HMODULE dll;
+    FILETIME dll_last_write_time;
     GameUpdateAndRender *update_and_render;
 };
 
@@ -82,6 +83,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     }
 
     GameCode game_code;
+    // TODO(ryan): pull out into function
+    // Loading the library and setting up the functions we'll be calling
     game_code.dll = LoadLibraryW(game_dll_path);
     if (!game_code.dll) {
         MessageBoxW(NULL, L"Failed to load game dll", L"Error", MB_OK);
@@ -91,6 +94,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     if (!game_code.update_and_render) {
         MessageBoxW(NULL, L"Failed to find game update_and_render function", L"Error", MB_OK);
         return 1;
+    }
+    {
+        // Getting write time of the dll
+        WIN32_FILE_ATTRIBUTE_DATA game_dll_file_attributes;
+        GetFileAttributesExW(game_dll_path, GetFileExInfoStandard, &game_dll_file_attributes);
+        game_code.dll_last_write_time = game_dll_file_attributes.ftLastWriteTime;
     }
 
     // TODO(ryan): check if there are different options we want to use for anything
@@ -139,10 +148,25 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     // fast.
     global_game_is_running = true;
     while (global_game_is_running) {
-        // TODO(ryan): game dll hot reloading here
-        // store last modified time of the dll 
-        // check if cached lmt does not match current lmt
-        // if not match, reload the game dll
+        {
+            WIN32_FILE_ATTRIBUTE_DATA dll_attribs;
+            GetFileAttributesExW(game_dll_path, GetFileExInfoStandard, &dll_attribs);
+            if (CompareFileTime(&dll_attribs.ftLastWriteTime, &game_code.dll_last_write_time) != 0) {
+                FreeLibrary(game_code.dll);
+                game_code = {};
+                // TODO(ryan): pull out into function
+                game_code.dll = LoadLibraryW(game_dll_path);
+                if (!game_code.dll) {
+                    MessageBoxW(NULL, L"Failed to load game dll", L"Error", MB_OK);
+                    return 1;
+                }
+                game_code.update_and_render = (GameUpdateAndRender *)GetProcAddress(game_code.dll, "update_and_render");
+                if (!game_code.update_and_render) {
+                    MessageBoxW(NULL, L"Failed to find game update_and_render function", L"Error", MB_OK);
+                    return 1;
+                }
+            }
+        }
 
         MSG window_message;
         while (PeekMessageW(&window_message, 0, 0, 0, PM_REMOVE)) {
