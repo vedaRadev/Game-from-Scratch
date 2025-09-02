@@ -19,6 +19,35 @@ struct GameCode {
 static bool global_game_is_running = false;
 static Win32OffscreenBuffer win32_offscreen_buffer;
 
+// TODO(ryan): Build custom wstring type that allows for things like slices?
+
+// TODO(ryan): Testing
+void copy_wstring(wchar_t *src, size_t src_len, wchar_t *dst, size_t dst_len) {
+    for (size_t i = 0; i < src_len && i < dst_len; i++) {
+        *dst++ = *src++;
+    }
+}
+
+// TODO(ryan): Testing
+// TODO(ryan): Probably a way to make this faster if needed. Initial thought is to maybe use a
+// single loop to copy both s1 and s2 at once into the proper positions at dst? Maybe it'll increase
+// a little bit of ILP if the compiler doesn't do it for us?
+void concat_wstrings(
+    const wchar_t *s1, size_t s1_len,
+    const wchar_t *s2, size_t s2_len,
+    wchar_t *dst, size_t dst_len
+)
+{
+    size_t copied = 0;
+    for (int i = 0; i < s1_len && copied < dst_len; i++, copied++) {
+        *dst++ = *s1++;
+        copied++;
+    }
+    for (int i = 0; i < s2_len && copied < dst_len; i++, copied++) {
+        *dst++ = *s2++;
+    }
+}
+
 LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM w_param, LPARAM l_param) {
     LRESULT result = 0;
 
@@ -49,16 +78,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     }
 
     // TODO(ryan): clean up the following section
-    // TODO(ryan): create custom wstring class that allows for slices?
     // FIXME(ryan): do NOT use MAX_PATH. It has a hard limit of 260 characters and will often fail
     // if people are installing the game deep in their filesystem. A solution for this is to use
     // dynamically-sized buffers but I'll have to write those myself later on.
     wchar_t exe_path[MAX_PATH];
     GetModuleFileNameW(NULL, exe_path, MAX_PATH);
     wchar_t *one_past_last_slash = NULL;
-    // FIXME(ryan): THIS IS NOT VALID UTF16 HANDLING. UTF16 DOES NOT HAVE FIXED-SIZED CHARACTERS.
-    // i.e. some utf16 glyphs are surrogate pairs and require 4 bytes to represent intead of just 2.
-    // Here we are treating the string as if it's ANSI (just a plain char[])!!! FIX IT.
+    // SAFETY: This works because the bit pattern for L'\\' will never appear in a surrogate pair.
+    // The value of L'\\' is 0x005C.
+    // Surrogate pair bit patterns range from [D800, DBFF] (high) and [DC00, DFFF].
     for (wchar_t *scan = exe_path; *scan; scan++) {
         if (*scan == L'\\') one_past_last_slash = scan + 1;
     }
@@ -69,23 +97,25 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
         return 1;
     }
     wchar_t game_dll_path[MAX_PATH];
-    wchar_t *dll_char = game_dll_path;
-    // TODO(ryan): Create functions for concatenating two wstrings
-    // Copy path to parent directory of exe to game_dll_path
-    for (wchar_t *exe_char = exe_path; exe_char != one_past_last_slash; exe_char++) {
-        *dll_char = *exe_char;
-        dll_char++;
-    }
-    // Concat game dll filename with the exe dir path
-    for (wchar_t c : L"game.dll") {
-        *dll_char = c;
-        dll_char++;
-    }
+    // TODO(ryan): better name for this? Maybe game_dev_dll_path?
+    wchar_t game_temp_dll_path[MAX_PATH];
+    concat_wstrings(
+        exe_path, one_past_last_slash - exe_path,
+        L"game.dll", sizeof(L"game.dll"),
+        game_dll_path, sizeof(game_dll_path)
+    );
+    concat_wstrings(
+        exe_path, one_past_last_slash - exe_path,
+        L"game_temp.dll", sizeof(L"game_temp.dll"),
+        game_temp_dll_path, sizeof(game_temp_dll_path)
+    );
+    // TODO(ryan): check if the game dll exists, abort if not?
+    CopyFileW(game_dll_path, game_temp_dll_path, false);
 
     GameCode game_code;
     // TODO(ryan): pull out into function
     // Loading the library and setting up the functions we'll be calling
-    game_code.dll = LoadLibraryW(game_dll_path);
+    game_code.dll = LoadLibraryW(game_temp_dll_path);
     if (!game_code.dll) {
         MessageBoxW(NULL, L"Failed to load game dll", L"Error", MB_OK);
         return 1;
@@ -153,9 +183,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
             GetFileAttributesExW(game_dll_path, GetFileExInfoStandard, &dll_attribs);
             if (CompareFileTime(&dll_attribs.ftLastWriteTime, &game_code.dll_last_write_time) != 0) {
                 FreeLibrary(game_code.dll);
+                CopyFileW(game_dll_path, game_temp_dll_path, false);
                 game_code = {};
                 // TODO(ryan): pull out into function
-                game_code.dll = LoadLibraryW(game_dll_path);
+                game_code.dll = LoadLibraryW(game_temp_dll_path);
                 if (!game_code.dll) {
                     MessageBoxW(NULL, L"Failed to load game dll", L"Error", MB_OK);
                     return 1;
