@@ -48,6 +48,23 @@ void concat_wstrings(
     }
 }
 
+GameCode load_game_code(const wchar_t *game_dll_path, const wchar_t *game_temp_dll_path) {
+    GameCode game_code = {};
+
+    CopyFileW(game_dll_path, game_temp_dll_path, false);
+    WIN32_FILE_ATTRIBUTE_DATA game_dll_file_attributes;
+    GetFileAttributesExW(game_dll_path, GetFileExInfoStandard, &game_dll_file_attributes);
+    game_code.dll_last_write_time = game_dll_file_attributes.ftLastWriteTime;
+
+    game_code.dll = LoadLibraryW(game_temp_dll_path);
+    if (!game_code.dll) return game_code;
+
+    game_code.update_and_render = (GameUpdateAndRender *)GetProcAddress(game_code.dll, "update_and_render");
+    if (!game_code.update_and_render) return game_code;
+
+    return game_code;
+}
+
 LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM w_param, LPARAM l_param) {
     LRESULT result = 0;
 
@@ -110,27 +127,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
         game_temp_dll_path, sizeof(game_temp_dll_path)
     );
     // TODO(ryan): check if the game dll exists, abort if not?
-    CopyFileW(game_dll_path, game_temp_dll_path, false);
 
-    GameCode game_code;
-    // TODO(ryan): pull out into function
-    // Loading the library and setting up the functions we'll be calling
-    game_code.dll = LoadLibraryW(game_temp_dll_path);
-    if (!game_code.dll) {
-        MessageBoxW(NULL, L"Failed to load game dll", L"Error", MB_OK);
-        return 1;
-    }
-    game_code.update_and_render = (GameUpdateAndRender *)GetProcAddress(game_code.dll, "update_and_render");
-    if (!game_code.update_and_render) {
-        MessageBoxW(NULL, L"Failed to find game update_and_render function", L"Error", MB_OK);
-        return 1;
-    }
-    {
-        // Getting write time of the dll
-        WIN32_FILE_ATTRIBUTE_DATA game_dll_file_attributes;
-        GetFileAttributesExW(game_dll_path, GetFileExInfoStandard, &game_dll_file_attributes);
-        game_code.dll_last_write_time = game_dll_file_attributes.ftLastWriteTime;
-    }
+    GameCode game_code = load_game_code(game_dll_path, game_temp_dll_path);
 
     // TODO(ryan): check if there are different options we want to use for anything
     HWND game_window = CreateWindowExW(
@@ -178,25 +176,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     // fast.
     global_game_is_running = true;
     while (global_game_is_running) {
-        {
-            WIN32_FILE_ATTRIBUTE_DATA dll_attribs;
-            GetFileAttributesExW(game_dll_path, GetFileExInfoStandard, &dll_attribs);
-            if (CompareFileTime(&dll_attribs.ftLastWriteTime, &game_code.dll_last_write_time) != 0) {
-                FreeLibrary(game_code.dll);
-                CopyFileW(game_dll_path, game_temp_dll_path, false);
-                game_code = {};
-                // TODO(ryan): pull out into function
-                game_code.dll = LoadLibraryW(game_temp_dll_path);
-                if (!game_code.dll) {
-                    MessageBoxW(NULL, L"Failed to load game dll", L"Error", MB_OK);
-                    return 1;
-                }
-                game_code.update_and_render = (GameUpdateAndRender *)GetProcAddress(game_code.dll, "update_and_render");
-                if (!game_code.update_and_render) {
-                    MessageBoxW(NULL, L"Failed to find game update_and_render function", L"Error", MB_OK);
-                    return 1;
-                }
-            }
+        WIN32_FILE_ATTRIBUTE_DATA dll_attribs;
+        GetFileAttributesExW(game_dll_path, GetFileExInfoStandard, &dll_attribs);
+        if (CompareFileTime(&dll_attribs.ftLastWriteTime, &game_code.dll_last_write_time) != 0) {
+            FreeLibrary(game_code.dll);
+            game_code = load_game_code(game_dll_path, game_temp_dll_path);
         }
 
         MSG window_message;
