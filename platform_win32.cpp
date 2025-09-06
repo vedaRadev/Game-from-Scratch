@@ -104,6 +104,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     // SAFETY: This works because the bit pattern for L'\\' will never appear in a surrogate pair.
     // The value of L'\\' is 0x005C.
     // Surrogate pair bit patterns range from [D800, DBFF] (high) and [DC00, DFFF].
+    // NOTE(ryan): Also I believe there should always be at least one slash in any value we get from
+    // GetModuleFileNameW so we don't have to worry about checking for null terminator (though maybe
+    // we should, we'd just have to be careful about false positive null terminators (maybe iterate
+    // two bytes at a time?))
     for (wchar_t *scan = exe_path; *scan; scan++) {
         if (*scan == L'\\') one_past_last_slash = scan + 1;
     }
