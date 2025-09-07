@@ -5,12 +5,16 @@
 // TODO(ryan): should we do this or include guards?
 #pragma once
 
-struct GameOffscreenBuffer {
+typedef struct GameOffscreenBuffer {
     void *memory;
     int width;
     int height;
     int bytes_per_pixel;
-};
+} GameOffscreenBuffer;
 
-#define GAME_UPDATE_AND_RENDER(name) void name(GameOffscreenBuffer *offscreen_buffer)
-typedef GAME_UPDATE_AND_RENDER(GameUpdateAndRender);
+#ifdef _MSC_VER
+#   define EXPORT __declspec(dllexport)  
+#endif
+
+EXPORT void update_and_render(GameOffscreenBuffer *);
+typedef void (*GameUpdateAndRender)(GameOffscreenBuffer *);

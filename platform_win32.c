@@ -2,19 +2,25 @@
 #include <stdint.h>
 #include "platform.h"
 
-struct Win32OffscreenBuffer {
+typedef struct Win32OffscreenBuffer {
     BITMAPINFO info;
     void *memory;
     uint16_t width;
     uint16_t height;
     uint8_t bytes_per_pixel;
-};
+} Win32OffscreenBuffer;
 
-struct GameCode {
+typedef struct GameCode {
     HMODULE dll;
     FILETIME dll_last_write_time;
-    GameUpdateAndRender *update_and_render;
-};
+    GameUpdateAndRender update_and_render;
+} GameCode;
+
+// TODO(ryan): move this into a defines.h header that gets included in both the
+// game and platform player
+typedef _Bool bool;
+#define true 1
+#define false 0
 
 static bool global_game_is_running = false;
 static Win32OffscreenBuffer win32_offscreen_buffer;
@@ -48,6 +54,7 @@ void concat_wstrings(
     }
 }
 
+// FIXME(ryan): hotloading isn't working properly
 GameCode load_game_code(const wchar_t *game_dll_path, const wchar_t *game_temp_dll_path) {
     GameCode game_code = {};
 
@@ -59,7 +66,7 @@ GameCode load_game_code(const wchar_t *game_dll_path, const wchar_t *game_temp_d
     game_code.dll = LoadLibraryW(game_temp_dll_path);
     if (!game_code.dll) return game_code;
 
-    game_code.update_and_render = (GameUpdateAndRender *)GetProcAddress(game_code.dll, "update_and_render");
+    game_code.update_and_render = (GameUpdateAndRender)GetProcAddress(game_code.dll, "update_and_render");
     if (!game_code.update_and_render) return game_code;
 
     return game_code;
@@ -154,11 +161,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     ShowWindow(game_window, cmd_show);
 
     // Pixels are stored as 0x00RRGGBB with windows
-    win32_offscreen_buffer = {
-        .width = 16,
-        .height = 16,
-        .bytes_per_pixel = 4, // 1 byte per color component (RGB) + 1 byte padding (align to 32-bit boundary)
-    };
+    win32_offscreen_buffer.width = 16;
+    win32_offscreen_buffer.height = 16;
+    win32_offscreen_buffer.bytes_per_pixel = 4; // 1 byte per color component (RGB) + 1 byte padding (align to 32-bit boundary)
     // TODO(ryan): check if this fails and handle gracefully
     win32_offscreen_buffer.memory = VirtualAlloc(
         0,
