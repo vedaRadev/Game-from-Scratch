@@ -14,19 +14,24 @@ REM /Z1 - omits default lib name from the object file
 REM WARNINGS
 REM 4100: unreferenced formal parameter
 REM 4101: unreferenced local variable
+REM 4189: variable initialized but not referenced
 
 REM ==================================================
 REM DEBUG BUILD
 REM specifically for a release build we'd want to look at changing/removing the following:
 REM     -FC -Od -Zi
 
-set COMMON_COMPILER_FLAGS=-MTd -nologo -std:c17 -fp:fast -Gm- -W4 -WX -wd4100 -wd4101 -Od -Oi -Zi -FC
+set COMMON_COMPILER_FLAGS=-MTd -nologo -std:c17 -fp:fast -Gm- -W4 -WX -wd4100 -wd4101 -wd4189 -Od -Oi -Zi -FC
 set COMMON_LINKER_FLAGS=-incremental:no -opt:ref
 
 REM building the game as a dynamic library
+echo creating game dll lock file
+echo game dll build in progress > game.lock
 cl ..\game.c -Fmgame.map -LD ^
     %COMMON_COMPILER_FLAGS% ^
     /link %COMMON_LINKER_FLAGS% -EXPORT:update_and_render
+del game.lock
+echo game dll lock file deleted
 
 REM building the platform layer as an executable
 cl ..\platform_win32.c -Fmplatform_win32.map ^

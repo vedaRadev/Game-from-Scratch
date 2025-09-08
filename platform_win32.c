@@ -22,7 +22,7 @@ typedef _Bool bool;
 #define true 1
 #define false 0
 
-static bool global_game_is_running = false;
+static bool game_is_running = false;
 static Win32OffscreenBuffer win32_offscreen_buffer;
 
 // TODO(ryan): Build custom wstring type that allows for things like slices?
@@ -54,20 +54,23 @@ void concat_wstrings(
     }
 }
 
-// FIXME(ryan): hotloading isn't working properly
-GameCode load_game_code(const wchar_t *game_dll_path, const wchar_t *game_temp_dll_path) {
+GameCode load_game_code(const wchar_t *game_dll_path, const wchar_t *game_temp_dll_path, const wchar_t *game_dll_lock_path) {
     GameCode game_code = {};
 
-    CopyFileW(game_dll_path, game_temp_dll_path, false);
-    WIN32_FILE_ATTRIBUTE_DATA game_dll_file_attributes;
-    GetFileAttributesExW(game_dll_path, GetFileExInfoStandard, &game_dll_file_attributes);
-    game_code.dll_last_write_time = game_dll_file_attributes.ftLastWriteTime;
-
-    game_code.dll = LoadLibraryW(game_temp_dll_path);
-    if (!game_code.dll) return game_code;
-
-    game_code.update_and_render = (GameUpdateAndRender)GetProcAddress(game_code.dll, "update_and_render");
-    if (!game_code.update_and_render) return game_code;
+    // NOTE(ryan): Our build script should create a dummy file before building the game dll and
+    // remove it after the dll build is finished. This guarantees that the OS has time to properly
+    // update the game dll file contents in the file system cache before we try to load it.
+    WIN32_FILE_ATTRIBUTE_DATA ignored;
+    if (!GetFileAttributesExW(game_dll_lock_path, GetFileExInfoStandard, &ignored)) {
+        WIN32_FILE_ATTRIBUTE_DATA game_dll_file_attributes;
+        GetFileAttributesExW(game_dll_path, GetFileExInfoStandard, &game_dll_file_attributes);
+        CopyFileW(game_dll_path, game_temp_dll_path, false);
+        game_code.dll_last_write_time = game_dll_file_attributes.ftLastWriteTime;
+        game_code.dll = LoadLibraryW(game_temp_dll_path);
+        if (game_code.dll) {
+            game_code.update_and_render = (GameUpdateAndRender)GetProcAddress(game_code.dll, "update_and_render");
+        }
+    }
 
     return game_code;
 }
@@ -78,7 +81,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM w_param, LPARAM l
     switch (message) {
         case WM_CLOSE: // TODO(ryan): handle WM_CLOSE as an error and recreate the window
         case WM_DESTROY:
-            global_game_is_running = false;
+            game_is_running = false;
             break;
 
         default:
@@ -124,22 +127,39 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
         // Can this ever even fail? Can we have a case where there's no backslash???
         return 1;
     }
+    // TODO(ryan): do we need the base_dir_path anymore? It's kind of left over from when I was
+    // trying a few different things out and needed a null-terminated base_dir_path for some win32
+    // calls. Could go back to constructing exe dir paths with just the exe_path and the
+    // one_past_last_slash - exe_path length calculation.
+    wchar_t base_dir_path[MAX_PATH];
+    size_t base_dir_path_len = one_past_last_slash - exe_path;
     wchar_t game_dll_path[MAX_PATH];
+    wchar_t game_dll_lock_path[MAX_PATH];
     // TODO(ryan): better name for this? Maybe game_dev_dll_path?
     wchar_t game_temp_dll_path[MAX_PATH];
     concat_wstrings(
-        exe_path, one_past_last_slash - exe_path,
+        exe_path, base_dir_path_len,
+        L"\0", sizeof(L"\0"),
+        base_dir_path, sizeof(base_dir_path)
+    );
+    concat_wstrings(
+        base_dir_path, base_dir_path_len,
         L"game.dll", sizeof(L"game.dll"),
         game_dll_path, sizeof(game_dll_path)
     );
     concat_wstrings(
-        exe_path, one_past_last_slash - exe_path,
+        base_dir_path, base_dir_path_len,
+        L"game.lock", sizeof(L"game.lock"),
+        game_dll_lock_path, sizeof(game_dll_lock_path)
+    );
+    concat_wstrings(
+        base_dir_path, base_dir_path_len,
         L"game_temp.dll", sizeof(L"game_temp.dll"),
         game_temp_dll_path, sizeof(game_temp_dll_path)
     );
     // TODO(ryan): check if the game dll exists, abort if not?
 
-    GameCode game_code = load_game_code(game_dll_path, game_temp_dll_path);
+    GameCode game_code = load_game_code(game_dll_path, game_temp_dll_path, game_dll_lock_path);
 
     // TODO(ryan): check if there are different options we want to use for anything
     HWND game_window = CreateWindowExW(
@@ -183,20 +203,20 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     // TODO(ryan): we need to be able to set a target framerate and sleep (or
     // spin, if we can't make our sleep granular) if we process everything too
     // fast.
-    global_game_is_running = true;
-    while (global_game_is_running) {
+    game_is_running = true;
+    while (game_is_running) {
         WIN32_FILE_ATTRIBUTE_DATA dll_attribs;
         GetFileAttributesExW(game_dll_path, GetFileExInfoStandard, &dll_attribs);
         if (CompareFileTime(&dll_attribs.ftLastWriteTime, &game_code.dll_last_write_time) != 0) {
             FreeLibrary(game_code.dll);
-            game_code = load_game_code(game_dll_path, game_temp_dll_path);
+            game_code = load_game_code(game_dll_path, game_temp_dll_path, game_dll_lock_path);
         }
 
         MSG window_message;
         while (PeekMessageW(&window_message, 0, 0, 0, PM_REMOVE)) {
             switch (window_message.message) {
                 case WM_QUIT:
-                    global_game_is_running = false;
+                    game_is_running = false;
                     break;
 
                 default:
@@ -220,8 +240,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
         buf.width = win32_offscreen_buffer.width;
         buf.height = win32_offscreen_buffer.height;
         buf.bytes_per_pixel = win32_offscreen_buffer.bytes_per_pixel;
-        // TODO(ryan): function pointer null check!
-        game_code.update_and_render(&buf);
+        if (game_code.update_and_render) {
+            game_code.update_and_render(&buf);
+        }
         StretchDIBits(
             device_context,
             0, 0, client_width, client_height,
