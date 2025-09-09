@@ -37,6 +37,6 @@ REM building the platform layer as an executable
 cl ..\platform_win32.c -Fmplatform_win32.map ^
     -D_UNICODE ^
     %COMMON_COMPILER_FLAGS% ^
-    /link %COMMON_LINKER_FLAGS% user32.lib gdi32.lib
+    /link %COMMON_LINKER_FLAGS% user32.lib gdi32.lib winmm.lib
 
 popd

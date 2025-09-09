@@ -24,6 +24,7 @@ typedef _Bool bool;
 
 static bool game_is_running = false;
 static Win32OffscreenBuffer win32_offscreen_buffer;
+static uint64_t wall_clock_frequency; // Performance counter ticks per second
 
 // TODO(ryan): Build custom wstring type that allows for things like slices?
 
@@ -73,6 +74,21 @@ GameCode load_game_code(const wchar_t *game_dll_path, const wchar_t *game_temp_d
     }
 
     return game_code;
+}
+
+inline uint64_t get_wall_clock() {
+    LARGE_INTEGER result;
+    QueryPerformanceCounter(&result);
+    return result.QuadPart;
+}
+
+inline float get_seconds_elapsed(
+    uint64_t wall_clock_end,
+    uint64_t wall_clock_start
+)
+{
+    float result = (float)(wall_clock_end - wall_clock_start) / (float)wall_clock_frequency;
+    return result;
 }
 
 LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM w_param, LPARAM l_param) {
@@ -200,10 +216,31 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     win32_offscreen_buffer.info.bmiHeader.biBitCount = win32_offscreen_buffer.bytes_per_pixel * 8;
     win32_offscreen_buffer.info.bmiHeader.biCompression = BI_RGB;
 
+    LARGE_INTEGER query_performance_frequency_result;
+    QueryPerformanceFrequency(&query_performance_frequency_result);
+    wall_clock_frequency = query_performance_frequency_result.QuadPart;
+
+    // NOTE(ryan): Default sleep granularity is ~16ms. If we do all our work for a frame and have
+    // time to spare before hitting our target frametime, we want to sleep the thread to avoid
+    // burning CPU cycles. Basically here we're trying to set a finer sleep granularity here. It may
+    // or may not happen, in which case we'll just have to spin and burn cycles in the event that we
+    // have time to spare.
+    const UINT DESIRED_SCHEDULER_MS = 1;
+    bool sleep_is_granular = timeBeginPeriod(DESIRED_SCHEDULER_MS) == TIMERR_NOERROR;
+
+    // TODO(ryan): We should calculate this based on the monitor refresh rate. Eventually though
+    // we'll want to allow the user to set a framerate limit or allow enable/disable of vsync.
+    // Some things we'll want to consider:
+    // - Most users nowadays have 1+ monitors
+    // - Game might be windowed and dragged from monitor to monitor
+    float target_seconds_per_frame = 1.0f / 60.0f;
+
     // TODO(ryan): we need to be able to set a target framerate and sleep (or
     // spin, if we can't make our sleep granular) if we process everything too
     // fast.
     game_is_running = true;
+    // TODO(ryan): should this initialize to 0?
+    uint64_t frame_start_wall_clock = get_wall_clock();
     while (game_is_running) {
         WIN32_FILE_ATTRIBUTE_DATA dll_attribs;
         GetFileAttributesExW(game_dll_path, GetFileExInfoStandard, &dll_attribs);
@@ -253,6 +290,42 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
             SRCCOPY
         );
         ReleaseDC(game_window, device_context);
+
+        uint64_t work_end_wall_clock = get_wall_clock();
+        float frame_work_seconds_elapsed = get_seconds_elapsed(work_end_wall_clock, frame_start_wall_clock);
+        if (frame_work_seconds_elapsed < target_seconds_per_frame) {
+            float sleep_seconds = 0.0f;
+            if (sleep_is_granular) {
+                sleep_seconds = target_seconds_per_frame - frame_work_seconds_elapsed;
+                DWORD sleep_ms = (DWORD)(1000.0f * sleep_seconds);
+                if (sleep_ms > 0) {
+                    Sleep(sleep_ms);
+                }
+            }
+
+            float frame_test_seconds_elapsed = get_seconds_elapsed(get_wall_clock(), frame_start_wall_clock);
+            // TODO(ryan): do want want to check the commented-out code or if our sleep_seconds were 0?
+            // If the former, it'll also alert us if we've woken up early from a sleep, which
+            // does seem to happen fairly often.
+            // if (frame_test_seconds_elapsed < target_seconds_per_frame) {
+            if (sleep_seconds <= 0.0f) { 
+                // TODO(ryan): log missed sleep
+                OutputDebugStringW(L"Missed sleep!\n");
+            }
+            while (frame_test_seconds_elapsed < target_seconds_per_frame) {
+                frame_test_seconds_elapsed = get_seconds_elapsed(get_wall_clock(), frame_start_wall_clock);
+            }
+
+        } else {
+            // TODO(ryan): log missed target seconds per frame
+            // i.e. something really hefty happened this frame!
+            OutputDebugStringW(L"We missed our target frame time!\n");
+        }
+
+        uint64_t frame_end_wall_clock = get_wall_clock();
+        // TODO(ryan): eventually we'll want a way to display this in-game
+        float frame_ms_elapsed = 1000.0f * get_seconds_elapsed(frame_end_wall_clock, frame_start_wall_clock);
+        frame_start_wall_clock = frame_end_wall_clock;
     }
 
     return 0;
