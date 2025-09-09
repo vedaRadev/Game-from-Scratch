@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include "platform.h"
 
-void update_and_render(GameOffscreenBuffer *offscreen_buffer) {
+EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
     const uint32_t color = 0x003090FF;
     uint8_t *row = (uint8_t *)offscreen_buffer->memory;
     for (int y = 0; y < offscreen_buffer->height; y++) {
