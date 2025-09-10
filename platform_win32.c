@@ -226,7 +226,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     // or may not happen, in which case we'll just have to spin and burn cycles in the event that we
     // have time to spare.
     const UINT DESIRED_SCHEDULER_MS = 1;
-    bool sleep_is_granular = timeBeginPeriod(DESIRED_SCHEDULER_MS) == TIMERR_NOERROR;
+    bool is_sleep_granular = timeBeginPeriod(DESIRED_SCHEDULER_MS) == TIMERR_NOERROR;
 
     // TODO(ryan): We should calculate this based on the monitor refresh rate. Eventually though
     // we'll want to allow the user to set a framerate limit or allow enable/disable of vsync.
@@ -254,6 +254,19 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
             switch (window_message.message) {
                 case WM_QUIT:
                     game_is_running = false;
+                    break;
+
+                case WM_SYSKEYUP:
+                case WM_SYSKEYDOWN:
+                case WM_KEYUP:
+                case WM_KEYDOWN:
+                    uint32_t virtual_key_code = (uint32_t)window_message.wParam;
+                    bool is_alt_pressed = (window_message.lParam & (1 << 29)) == 1;
+                    bool is_down = (window_message.lParam & (1 << 31)) == 0;
+                    bool was_down = (window_message.lParam & (1 << 30)) != 0;
+
+                    // TODO(ryan): keyboard input, ideally not hardcoded in platform layer
+
                     break;
 
                 default:
@@ -295,7 +308,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
         float frame_work_seconds_elapsed = get_seconds_elapsed(work_end_wall_clock, frame_start_wall_clock);
         if (frame_work_seconds_elapsed < target_seconds_per_frame) {
             float sleep_seconds = 0.0f;
-            if (sleep_is_granular) {
+            if (is_sleep_granular) {
                 sleep_seconds = target_seconds_per_frame - frame_work_seconds_elapsed;
                 DWORD sleep_ms = (DWORD)(1000.0f * sleep_seconds);
                 if (sleep_ms > 0) {
@@ -308,7 +321,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
             // If the former, it'll also alert us if we've woken up early from a sleep, which
             // does seem to happen fairly often.
             // if (frame_test_seconds_elapsed < target_seconds_per_frame) {
-            if (sleep_seconds <= 0.0f) { 
+            if (is_sleep_granular && sleep_seconds <= 0.0f) { 
                 // TODO(ryan): log missed sleep
                 OutputDebugStringW(L"Missed sleep!\n");
             }
