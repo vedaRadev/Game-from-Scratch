@@ -260,12 +260,39 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
                 case WM_SYSKEYDOWN:
                 case WM_KEYUP:
                 case WM_KEYDOWN:
-                    uint32_t virtual_key_code = (uint32_t)window_message.wParam;
-                    bool is_alt_pressed = (window_message.lParam & (1 << 29)) == 1;
-                    bool is_down = (window_message.lParam & (1 << 31)) == 0;
                     bool was_down = (window_message.lParam & (1 << 30)) != 0;
+                    bool is_down = (window_message.lParam & (1 << 31)) == 0;
+                    if (is_down != was_down) {
+                        uint32_t virtual_key_code = (uint32_t)window_message.wParam;
+                        bool is_alt_pressed = (window_message.lParam & (1 << 29));
+                        bool is_extended_key = (window_message.lParam & (1 << 24));
 
-                    // TODO(ryan): keyboard input, ideally not hardcoded in platform layer
+                        // TODO(ryan): Should these be handled here in the platform layer or should they
+                        // be handled in the game which then sends some request for the operation to the
+                        // platform layer?
+                        if (is_down) {
+                            if (virtual_key_code == VK_F4 && is_alt_pressed) {
+                                game_is_running = false;
+                            }
+
+                            if (virtual_key_code == VK_RETURN && is_alt_pressed) {
+                                // TODO(ryan): toggle fullscreen
+                            }
+                        }
+
+                        GameKey game_key = (GameKey)virtual_key_code;
+                        if (virtual_key_code == VK_MENU) {
+                            game_key = is_extended_key ? GAME_KEY_ALT_R : GAME_KEY_ALT_L;
+                        } else if (virtual_key_code == VK_SHIFT) {
+                            // NOTE(ryan): From a comment by Travis Vroman in Kohi source, bits
+                            // indicating key extensions aren't set for shift.
+                            uint32_t left_shift = MapVirtualKeyW(VK_LSHIFT, MAPVK_VK_TO_VSC);
+                            uint32_t scancode = (window_message.lParam & (0xFF << 16)) >> 16;
+                            game_key = scancode == left_shift ? GAME_KEY_SHIFT_L : GAME_KEY_SHIFT_R;
+                        } else if (virtual_key_code == VK_CONTROL) {
+                            game_key = is_extended_key ? GAME_KEY_CTRL_R : GAME_KEY_CTRL_L;
+                        }
+                    }
 
                     break;
 
