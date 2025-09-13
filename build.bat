@@ -16,13 +16,17 @@ REM WARNINGS
 REM 4100: unreferenced formal parameter
 REM 4101: unreferenced local variable
 REM 4189: variable initialized but not referenced
+REM 4172: conditional expression is constant
 
 REM ==================================================
 REM DEBUG BUILD
 REM specifically for a release build we'd want to look at changing/removing the following:
 REM     -FC -Od -Zi
 
-set COMMON_COMPILER_FLAGS=-MTd -nologo -std:c17 -fp:fast -Gm- -W4 -WX -wd4100 -wd4101 -wd4189 -Od -Oi -Zi -FC
+set COMMON_COMPILER_FLAGS=^
+    -MTd -nologo -std:c17 -fp:fast -Gm- -Od -Oi -Zi -FC^
+    -W4 -WX -wd4100 -wd4101 -wd4189 -wd4127^
+    -DASSERTIONS_ENABLED
 set COMMON_LINKER_FLAGS=-incremental:no -opt:ref
 
 REM building the game as a dynamic library

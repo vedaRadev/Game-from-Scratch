@@ -10,6 +10,17 @@
 #include <stdint.h>
 typedef enum { false, true } bool;
 
+// TODO(ryan): If not unity build, move into own file?
+// TODO(ryan): This assumes that we're running while hooked up to a debugger and can catch a crash.
+// See GEA 3rd p126 for details on a perhaps more-proper assertion implementation. Probably want to
+// use the __FILE__ and __LINE__ macros to report when an assertion fails, then use some inline
+// assembly that will break to a debugger if one is attached.
+#ifdef ASSERTIONS_ENABLED
+#   define assert(expr) if (!(expr)) { *(volatile int *)0; }
+#else
+#   define assert(expr)
+#endif
+
 typedef struct GameOffscreenBuffer {
     void *memory;
     int width;
