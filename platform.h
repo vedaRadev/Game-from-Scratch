@@ -5,6 +5,11 @@
 // TODO(ryan): should we do this or include guards?
 #pragma once
 
+// TODO(ryan): maybe move common types and "#define"s into a separate file? Not sure if
+// I'm going to do a unity build or not yet.
+#include <stdint.h>
+typedef enum { false, true } bool;
+
 typedef struct GameOffscreenBuffer {
     void *memory;
     int width;
@@ -109,7 +114,7 @@ typedef enum GameKey {
 } GameKey;
 
 typedef struct GameInput {
-    // TODO(ryan): keyboard input somehow
+    bool keys_down[256];
     // TODO(ryan): mouse input
 } GameInput;
 
@@ -125,6 +130,6 @@ typedef struct GameInput {
 //      typedef void (*GameUpdateAndRender)(/* args */)
 // But that means that the prototype for update_and_render will be included in the platform layer,
 // which isn't what I wanted (didn't seem to cause issues with MSVC though, so maybe doesn't matter).
-#define GAME_UPDATE_AND_RENDER_SIGNATURE(func_name) void func_name(GameOffscreenBuffer *offscreen_buffer)
+#define GAME_UPDATE_AND_RENDER_SIGNATURE(func_name) void func_name(GameOffscreenBuffer *offscreen_buffer, GameInput *input)
 #define GAME_UPDATE_AND_RENDER_TYPE(type_name) GAME_UPDATE_AND_RENDER_SIGNATURE((*type_name))
 typedef GAME_UPDATE_AND_RENDER_TYPE(GameUpdateAndRender);

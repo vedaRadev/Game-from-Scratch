@@ -1,5 +1,4 @@
 #include <windows.h>
-#include <stdint.h>
 #include "platform.h"
 
 typedef struct Win32OffscreenBuffer {
@@ -15,12 +14,6 @@ typedef struct GameCode {
     FILETIME dll_last_write_time;
     GameUpdateAndRender update_and_render;
 } GameCode;
-
-// TODO(ryan): move this into a defines.h header that gets included in both the
-// game and platform player
-typedef _Bool bool;
-#define true 1
-#define false 0
 
 static bool game_is_running = false;
 static Win32OffscreenBuffer win32_offscreen_buffer;
@@ -241,6 +234,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     game_is_running = true;
     // TODO(ryan): should this initialize to 0?
     uint64_t frame_start_wall_clock = get_wall_clock();
+    GameInput game_input = {};
     while (game_is_running) {
         WIN32_FILE_ATTRIBUTE_DATA dll_attribs;
         GetFileAttributesExW(game_dll_path, GetFileExInfoStandard, &dll_attribs);
@@ -292,6 +286,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
                         } else if (virtual_key_code == VK_CONTROL) {
                             game_key = is_extended_key ? GAME_KEY_CTRL_R : GAME_KEY_CTRL_L;
                         }
+
+                        game_input.keys_down[game_key] = is_down;
                     }
 
                     break;
@@ -318,7 +314,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
         buf.height = win32_offscreen_buffer.height;
         buf.bytes_per_pixel = win32_offscreen_buffer.bytes_per_pixel;
         if (game_code.update_and_render) {
-            game_code.update_and_render(&buf);
+            game_code.update_and_render(&buf, &game_input);
         }
         StretchDIBits(
             device_context,
@@ -369,4 +365,5 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     }
 
     return 0;
+
 }
