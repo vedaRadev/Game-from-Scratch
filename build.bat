@@ -1,6 +1,7 @@
 @echo off
 
-set BUILD_DIR=%0\..\build
+set SRC_DIR=%~dp0\src
+set BUILD_DIR=%~dp0\build
 if not exist %BUILD_DIR% mkdir %BUILD_DIR%
 pushd %BUILD_DIR%
 
@@ -27,14 +28,14 @@ set COMMON_LINKER_FLAGS=-incremental:no -opt:ref
 REM building the game as a dynamic library
 echo creating game dll lock file
 echo game dll build in progress > game.lock
-cl ..\game.c -Fmgame.map -LD ^
+cl %SRC_DIR%\game.c -Fmgame.map -LD ^
     %COMMON_COMPILER_FLAGS% ^
     /link %COMMON_LINKER_FLAGS% -EXPORT:update_and_render
 del game.lock
 echo game dll lock file deleted
 
 REM building the platform layer as an executable
-cl ..\platform_win32.c -Fmplatform_win32.map ^
+cl %SRC_DIR%\platform_win32.c -Fmplatform_win32.map ^
     -D_UNICODE ^
     %COMMON_COMPILER_FLAGS% ^
     /link %COMMON_LINKER_FLAGS% user32.lib gdi32.lib winmm.lib
