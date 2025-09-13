@@ -39,16 +39,16 @@ typedef enum GameKey {
     GAME_KEY_RIGHT = 0x29,
 
     // NUMERIC
-    GAME_KEY_1 = 0x30,
-    GAME_KEY_2 = 0x31,
-    GAME_KEY_3 = 0x32,
-    GAME_KEY_4 = 0x33,
-    GAME_KEY_5 = 0x34,
-    GAME_KEY_6 = 0x35,
-    GAME_KEY_7 = 0x36,
-    GAME_KEY_8 = 0x37,
-    GAME_KEY_9 = 0x38,
-    GAME_KEY_0 = 0x39,
+    GAME_KEY_0 = 0x30,
+    GAME_KEY_1 = 0x31,
+    GAME_KEY_2 = 0x32,
+    GAME_KEY_3 = 0x33,
+    GAME_KEY_4 = 0x34,
+    GAME_KEY_5 = 0x35,
+    GAME_KEY_6 = 0x36,
+    GAME_KEY_7 = 0x37,
+    GAME_KEY_8 = 0x38,
+    GAME_KEY_9 = 0x39,
 
     // ALPHABETIC
     GAME_KEY_A = 0x41,
