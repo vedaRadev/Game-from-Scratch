@@ -1,13 +1,13 @@
 #include <windows.h>
 #include "platform.h"
 
-typedef struct Win32OffscreenBuffer {
+typedef struct OffscreenBuffer {
     BITMAPINFO info;
     void *memory;
     uint16_t width;
     uint16_t height;
     uint8_t bytes_per_pixel;
-} Win32OffscreenBuffer;
+} OffscreenBuffer;
 
 typedef struct GameCode {
     HMODULE dll;
@@ -16,7 +16,7 @@ typedef struct GameCode {
 } GameCode;
 
 static bool game_is_running = false;
-static Win32OffscreenBuffer win32_offscreen_buffer;
+static OffscreenBuffer offscreen_buffer;
 static uint64_t wall_clock_frequency; // Performance counter ticks per second
 
 // TODO(ryan): Build custom wstring type that allows for things like slices?
@@ -69,6 +69,36 @@ GameCode load_game_code(const wchar_t *game_dll_path, const wchar_t *game_temp_d
     return game_code;
 }
 
+typedef struct WindowClientDimensions {
+    int width;
+    int height;
+} WindowClientDimensions;
+
+WindowClientDimensions get_window_client_dimensions(HWND window) {
+    WindowClientDimensions result = {};
+    RECT client_rect;
+    GetClientRect(window, &client_rect);
+    result.width = client_rect.right - client_rect.left;
+    result.height = client_rect.bottom - client_rect.top;
+    return result;
+}
+
+void display_offscreen_buffer_in_window(OffscreenBuffer *buffer, HDC window_device_context, int client_width, int client_height) {
+    // TODO(ryan): only clear the parts of the screen we AREN'T using
+    // e.g. if we're drawing to only a portion of the screen and have black bars
+    // (think 4:3 fullscreen on a 16:9 monitor)
+    // PatBlt(device_context, 0, 0, client_width, client_height, BLACKNESS);
+    StretchDIBits(
+        window_device_context,
+        0, 0, client_width, client_height,
+        0, 0, buffer->width, buffer->height,
+        buffer->memory,
+        &buffer->info,
+        DIB_RGB_COLORS,
+        SRCCOPY
+    );
+}
+
 inline uint64_t get_wall_clock() {
     LARGE_INTEGER result;
     QueryPerformanceCounter(&result);
@@ -88,6 +118,18 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM w_param, LPARAM l
     LRESULT result = 0;
 
     switch (message) {
+        // TODO(ryan): Should we handle this?
+        // case WM_ACTIVATEAPP:
+        //     break;
+
+        case WM_PAINT:
+            WindowClientDimensions client = get_window_client_dimensions(window);
+            PAINTSTRUCT ps;
+            HDC window_device_context = BeginPaint(window, &ps);
+            display_offscreen_buffer_in_window(&offscreen_buffer, window_device_context, client.width, client.height);
+            EndPaint(window, &ps);
+            break;
+
         case WM_CLOSE: // TODO(ryan): handle WM_CLOSE as an error and recreate the window
         case WM_DESTROY:
             game_is_running = false;
@@ -190,24 +232,24 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     ShowWindow(game_window, cmd_show);
 
     // Pixels are stored as 0x00RRGGBB with windows
-    win32_offscreen_buffer.width = 16;
-    win32_offscreen_buffer.height = 16;
-    win32_offscreen_buffer.bytes_per_pixel = 4; // 1 byte per color component (RGB) + 1 byte padding (align to 32-bit boundary)
+    offscreen_buffer.width = 320;
+    offscreen_buffer.height = 200;
+    offscreen_buffer.bytes_per_pixel = 4; // 1 byte per color component (RGB) + 1 byte padding (align to 32-bit boundary)
     // TODO(ryan): check if this fails and handle gracefully
-    win32_offscreen_buffer.memory = VirtualAlloc(
+    offscreen_buffer.memory = VirtualAlloc(
         0,
-        win32_offscreen_buffer.width * win32_offscreen_buffer.height * win32_offscreen_buffer.bytes_per_pixel,
+        offscreen_buffer.width * offscreen_buffer.height * offscreen_buffer.bytes_per_pixel,
         MEM_RESERVE | MEM_COMMIT,
         PAGE_READWRITE
     );
-    win32_offscreen_buffer.info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    win32_offscreen_buffer.info.bmiHeader.biWidth = win32_offscreen_buffer.width;
+    offscreen_buffer.info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    offscreen_buffer.info.bmiHeader.biWidth = offscreen_buffer.width;
     // NOTE(ryan): When biHeight is negative, windows treats this as a TOPDOWN buffer.
     // i.e. (0, 0) is the upper-left corner of the image. 
-    win32_offscreen_buffer.info.bmiHeader.biHeight = -win32_offscreen_buffer.height;
-    win32_offscreen_buffer.info.bmiHeader.biPlanes = 1;
-    win32_offscreen_buffer.info.bmiHeader.biBitCount = win32_offscreen_buffer.bytes_per_pixel * 8;
-    win32_offscreen_buffer.info.bmiHeader.biCompression = BI_RGB;
+    offscreen_buffer.info.bmiHeader.biHeight = -offscreen_buffer.height;
+    offscreen_buffer.info.bmiHeader.biPlanes = 1;
+    offscreen_buffer.info.bmiHeader.biBitCount = offscreen_buffer.bytes_per_pixel * 8;
+    offscreen_buffer.info.bmiHeader.biCompression = BI_RGB;
 
     LARGE_INTEGER query_performance_frequency_result;
     QueryPerformanceFrequency(&query_performance_frequency_result);
@@ -299,32 +341,19 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
             }
         }
 
-        RECT client_rect;
-        GetClientRect(game_window, &client_rect);
-        int client_width = client_rect.right - client_rect.left;
-        int client_height = client_rect.bottom - client_rect.top;
-        HDC device_context = GetDC(game_window);
-        // TODO(ryan): only clear the parts of the screen we AREN'T using
-        // e.g. if we're drawing to only a portion of the screen and have black bars
-        // (think 4:3 fullscreen on a 16:9 monitor)
-        // PatBlt(device_context, 0, 0, client_width, client_height, BLACKNESS);
-        GameOffscreenBuffer buf;
-        buf.memory = win32_offscreen_buffer.memory;
-        buf.width = win32_offscreen_buffer.width;
-        buf.height = win32_offscreen_buffer.height;
-        buf.bytes_per_pixel = win32_offscreen_buffer.bytes_per_pixel;
         if (game_code.update_and_render) {
+            GameOffscreenBuffer buf;
+            buf.memory = offscreen_buffer.memory;
+            buf.width = offscreen_buffer.width;
+            buf.height = offscreen_buffer.height;
+            buf.bytes_per_pixel = offscreen_buffer.bytes_per_pixel;
+
             game_code.update_and_render(&buf, &game_input);
         }
-        StretchDIBits(
-            device_context,
-            0, 0, client_width, client_height,
-            0, 0, win32_offscreen_buffer.width, win32_offscreen_buffer.height,
-            win32_offscreen_buffer.memory,
-            &win32_offscreen_buffer.info,
-            DIB_RGB_COLORS,
-            SRCCOPY
-        );
+
+        HDC device_context = GetDC(game_window);
+        WindowClientDimensions client = get_window_client_dimensions(game_window);
+        display_offscreen_buffer_in_window(&offscreen_buffer, device_context, client.width, client.height);
         ReleaseDC(game_window, device_context);
 
         uint64_t work_end_wall_clock = get_wall_clock();
