@@ -2,6 +2,10 @@
 #include "platform.h"
 
 EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
+    if (!memory->is_initialized) {
+        memory->is_initialized = true;
+    }
+
     const uint32_t RED   = 0x00FF0000;
     const uint32_t BLACK = 0;
     // TODO(ryan): just test code, do NOT use static storage in game DLL!

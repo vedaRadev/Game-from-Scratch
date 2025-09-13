@@ -129,6 +129,13 @@ typedef struct GameInput {
     // TODO(ryan): mouse input
 } GameInput;
 
+// TODO(ryan): maybe we should split this up into persistent (across frame boundaries) and scratch storage?
+typedef struct GameMemory {
+    bool is_initialized;
+    void *storage;
+    size_t storage_size;
+} GameMemory;
+
 #ifdef _MSC_VER
     // TODO(ryan): document why we don't have to declare __declspec(dllexport/dllimport) when using MSVC
     // (reminder: we're declaring -EXPORT:func_name to the linker in our build script)
@@ -141,6 +148,6 @@ typedef struct GameInput {
 //      typedef void (*GameUpdateAndRender)(/* args */)
 // But that means that the prototype for update_and_render will be included in the platform layer,
 // which isn't what I wanted (didn't seem to cause issues with MSVC though, so maybe doesn't matter).
-#define GAME_UPDATE_AND_RENDER_SIGNATURE(func_name) void func_name(GameOffscreenBuffer *offscreen_buffer, GameInput *input)
+#define GAME_UPDATE_AND_RENDER_SIGNATURE(func_name) void func_name(GameOffscreenBuffer *offscreen_buffer, GameInput *input, GameMemory *memory)
 #define GAME_UPDATE_AND_RENDER_TYPE(type_name) GAME_UPDATE_AND_RENDER_SIGNATURE((*type_name))
 typedef GAME_UPDATE_AND_RENDER_TYPE(GameUpdateAndRender);

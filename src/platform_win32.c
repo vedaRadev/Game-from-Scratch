@@ -251,6 +251,23 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     offscreen_buffer.info.bmiHeader.biBitCount = offscreen_buffer.bytes_per_pixel * 8;
     offscreen_buffer.info.bmiHeader.biCompression = BI_RGB;
 
+    #define kibibytes(n) n * 1024ll
+    #define mebibytes(n) n * kibibytes(n)
+    #define gibibytes(n) n * mebibytes(n)
+    const size_t GAME_STORAGE_SIZE = mebibytes(128);
+    GameMemory game_memory = {};
+    game_memory.storage_size = GAME_STORAGE_SIZE;
+    game_memory.storage = VirtualAlloc(
+        0,
+        GAME_STORAGE_SIZE,
+        MEM_RESERVE | MEM_COMMIT,
+        PAGE_READWRITE
+    );
+    if (!game_memory.storage) {
+        MessageBoxW(NULL, L"Failed to allocate memory for game", L"Error", MB_OK);
+        return 1;
+    }
+
     LARGE_INTEGER query_performance_frequency_result;
     QueryPerformanceFrequency(&query_performance_frequency_result);
     wall_clock_frequency = query_performance_frequency_result.QuadPart;
@@ -348,7 +365,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
             buf.height = offscreen_buffer.height;
             buf.bytes_per_pixel = offscreen_buffer.bytes_per_pixel;
 
-            game_code.update_and_render(&buf, &game_input);
+            game_code.update_and_render(&buf, &game_input, &game_memory);
         }
 
         HDC device_context = GetDC(game_window);
