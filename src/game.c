@@ -347,8 +347,10 @@ EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
     }
 
     Vec3 cam_motion = {};
-    if (input->keys_down[GAME_KEY_W]) cam_motion.z += 0.1f;
-    if (input->keys_down[GAME_KEY_S]) cam_motion.z -= 0.1f;
+    // FIXME(ryan): I want +Z to be forward but it's kinda backward right now.
+    // i.e. W should move the cam forward ALWAYS
+    if (input->keys_down[GAME_KEY_W]) cam_motion.z -= 0.1f;
+    if (input->keys_down[GAME_KEY_S]) cam_motion.z += 0.1f;
     if (input->keys_down[GAME_KEY_A]) cam_motion.x -= 0.1f;
     if (input->keys_down[GAME_KEY_D]) cam_motion.x += 0.1f;
 
