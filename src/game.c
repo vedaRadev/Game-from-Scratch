@@ -119,6 +119,90 @@ Mat3x3 mat3x3_transpose(Mat3x3 m) {
     return result;
 }
 
+// Let A be 4x4 matrix, B be 4x4 matrix.
+// Computes AB.
+Mat3x3 mult_mat3x3_mat3x3(Mat3x3 a, Mat3x3 b) {
+    Mat3x3 result = {};
+    Mat3x3 b_transpose = mat3x3_transpose(b);
+
+    for (int r = 0; r < 3; r++) {
+        float *a_row = a.rows[r];
+        for (int c = 0; c < 3; c++) {
+            float *b_col = b_transpose.rows[c];
+            for (int i = 0; i < 3; i++) {
+                result.rows[r][c] += (a_row[i] * b_col[i]);
+            }
+        }
+    }
+
+    return result;
+}
+
+Mat3x3 mat3x3_create_identity() {
+    Mat3x3 result = {};
+    result.rows[0][0] = 1;
+    result.rows[1][1] = 1;
+    result.rows[2][2] = 1;
+    return result;
+}
+
+Mat3x3 mat3x3_create_rotation_x(float radians) {
+    Mat3x3 result = {};
+
+    float sin_theta = (float)sin(radians);
+    float cos_theta = (float)cos(radians);
+
+    result.rows[0][0] = 1;
+    result.rows[0][1] = 0;
+    result.rows[0][2] = 0;
+    result.rows[1][0] = 0;
+    result.rows[1][1] = cos_theta;
+    result.rows[1][2] = -sin_theta;
+    result.rows[2][0] = 0;
+    result.rows[2][1] = sin_theta;
+    result.rows[2][2] = cos_theta;
+
+    return result;
+}
+
+Mat3x3 mat3x3_create_rotation_y(float radians) {
+    Mat3x3 result = {};
+
+    float sin_theta = (float)sin(radians);
+    float cos_theta = (float)cos(radians);
+
+    result.rows[0][0] = cos_theta;
+    result.rows[0][1] = 0;
+    result.rows[0][2] = sin_theta;
+    result.rows[1][0] = 0;
+    result.rows[1][1] = 1;
+    result.rows[1][2] = 0;
+    result.rows[2][0] = -sin_theta;
+    result.rows[2][1] = 0;
+    result.rows[2][2] = cos_theta;
+
+    return result;
+}
+
+Mat3x3 mat3x3_create_rotation_z(float radians) {
+    Mat3x3 result = {};
+
+    float sin_theta = (float)sin(radians);
+    float cos_theta = (float)cos(radians);
+
+    result.rows[0][0] = cos_theta;
+    result.rows[0][1] = -sin_theta;
+    result.rows[0][2] = 0;
+    result.rows[1][0] = sin_theta;
+    result.rows[1][1] = cos_theta;
+    result.rows[1][2] = 0;
+    result.rows[2][0] = 0;
+    result.rows[2][1] = 0;
+    result.rows[2][2] = 1;
+
+    return result;
+}
+
 typedef struct Mat4x4 {
     union {
         float elements[16];
@@ -211,9 +295,8 @@ size_t bresenham(Point *points, size_t points_len, int x0, int y0, int x1, int y
 }
 
 typedef struct GameState {
-    Vec3 cam_world_pos;
-    float cam_pitch;
-    float cam_yaw;
+    Vec3 camera_world_position;
+    Mat3x3 camera_world_rotation;
     Mat4x4 perspective;
     Mat4x4 ndc_to_screen;
 } GameState;
@@ -257,6 +340,34 @@ static size_t cube_edges[] = {
     3, 7, 6, 2,
 };
 
+// NOTE(ryan): Unused for now.
+// TODO(ryan): Eventually worry about triangle winding order!
+static size_t cube_triangles[] = {
+    // Front face
+    0, 1, 3,
+    2, 3, 1,
+
+    // Left face
+    4, 0, 7,
+    7, 6, 0,
+
+    // Back face
+    4, 5, 7,
+    6, 7, 5,
+
+    // Right face
+    1, 5, 2,
+    6, 2, 5,
+
+    // Top face
+    4, 5, 0,
+    1, 0, 5,
+
+    // Bottom face
+    7, 6, 3,
+    2, 3, 6,
+};
+
 static uint32_t BACKGROUND_COLOR = 0x00000000;
 static uint32_t EDGE_COLOR       = 0x00FFFFFF;
 
@@ -270,128 +381,136 @@ static float far        = 10.0f;
 // static float left       = 0.0f;
 // static float right      = 0.0f;
 
+// Draw a line between points (x0, y0) and (x1, y1) inclusive. Scratch memory is
+// needed for generation of intermediate points.
+void draw_line(
+    GameOffscreenBuffer *offscreen_buffer,
+    Point *scratch, size_t scratch_mem_size,
+    int x0, int y0,
+    int x1, int y1,
+    uint32_t color
+)
+{
+    size_t num_points = 0;
+    num_points = bresenham(scratch, scratch_mem_size, x0, y0, x1, y1);
+    uint32_t *pixels = (uint32_t *)offscreen_buffer->memory;
+    for (int p_i = 0; p_i < num_points; p_i++) {
+        Point p = scratch[p_i];
+        if ((p.x >= 0 && p.x < offscreen_buffer->width) &&
+            (p.y >= 0 && p.y < offscreen_buffer->height))
+        {
+            pixels[p.x + p.y * offscreen_buffer->width] = color;
+        }
+    }
+}
+
 EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
     GameState *game_state = (GameState *)memory->storage;
 
     if (!memory->is_initialized) {
         memory->is_initialized = true;
 
-        game_state->cam_world_pos.x = 0.0f;
-        game_state->cam_world_pos.y = 0.0f;
-        game_state->cam_world_pos.z = 0.0f;
-        game_state->cam_pitch = 0.0f;
-        game_state->cam_yaw   = 0.0f;
-    }
+        game_state->camera_world_position.x = 0.0f;
+        game_state->camera_world_position.y = 0.0f;
+        game_state->camera_world_position.z = 0.0f;
+        game_state->camera_world_rotation = mat3x3_create_identity();
 
-    // TODO(ryan): move back into game state init!
-    {
-        float aspect_ratio = (float)offscreen_buffer->width / (float)offscreen_buffer->height;
-        float c = (float)(1.0 / tan(vert_fov / 2.0f));
+        {
+            float aspect_ratio = (float)offscreen_buffer->width / (float)offscreen_buffer->height;
+            float c = (float)(1.0 / tan(vert_fov / 2.0f));
 
-        // Set up OpenGL-style perspective transform matrix
+            // Set up OpenGL-style perspective transform matrix
 
-        game_state->perspective.rows[0][0] = c / aspect_ratio;
-        game_state->perspective.rows[0][1] = 0;
-        game_state->perspective.rows[0][2] = 0;
-        game_state->perspective.rows[0][3] = 0;
+            game_state->perspective.rows[0][0] = c / aspect_ratio;
+            game_state->perspective.rows[0][1] = 0;
+            game_state->perspective.rows[0][2] = 0;
+            game_state->perspective.rows[0][3] = 0;
 
-        game_state->perspective.rows[1][0] = 0;
-        game_state->perspective.rows[1][1] = c;
-        game_state->perspective.rows[1][2] = 0;
-        game_state->perspective.rows[1][3] = 0;
+            game_state->perspective.rows[1][0] = 0;
+            game_state->perspective.rows[1][1] = c;
+            game_state->perspective.rows[1][2] = 0;
+            game_state->perspective.rows[1][3] = 0;
 
-        game_state->perspective.rows[2][0] = 0;
-        game_state->perspective.rows[2][1] = 0;
-        game_state->perspective.rows[2][2] = -((far + near) / (far - near));
-        game_state->perspective.rows[2][3] = -((2 * far * near) / (far - near));
+            game_state->perspective.rows[2][0] = 0;
+            game_state->perspective.rows[2][1] = 0;
+            game_state->perspective.rows[2][2] = -((far + near) / (far - near));
+            game_state->perspective.rows[2][3] = -((2 * far * near) / (far - near));
 
-        game_state->perspective.rows[3][0] = 0;
-        game_state->perspective.rows[3][1] = 0;
-        game_state->perspective.rows[3][2] = -1;
-        game_state->perspective.rows[3][3] = 0;
-    }
+            game_state->perspective.rows[3][0] = 0;
+            game_state->perspective.rows[3][1] = 0;
+            game_state->perspective.rows[3][2] = -1;
+            game_state->perspective.rows[3][3] = 0;
+        }
 
-    // TODO(ryan): move back into game state init!
-    {
-        // NDC ranges from [-1, -1] to [1, 1]
-        // We want to map to our screen, which is from [0, 0] to [width, height], and where +y is down
+        {
+            // NDC ranges from [-1, -1] to [1, 1]
+            // We want to map to our screen, which is from [0, 0] to [width, height], and where +y is down
 
-        float half_width = offscreen_buffer->width / 2.0f;
-        float half_height = offscreen_buffer->height / 2.0f;
-        float screen_offset_x = 0.0f;
-        float screen_offset_y = 0.0f;
+            float half_width = offscreen_buffer->width / 2.0f;
+            float half_height = offscreen_buffer->height / 2.0f;
+            float screen_offset_x = 0.0f;
+            float screen_offset_y = 0.0f;
 
-        game_state->ndc_to_screen.rows[0][0] = half_width;
-        game_state->ndc_to_screen.rows[0][1] = 0;
-        game_state->ndc_to_screen.rows[0][2] = 0;
-        game_state->ndc_to_screen.rows[0][3] = half_width + screen_offset_x;
+            game_state->ndc_to_screen.rows[0][0] = half_width;
+            game_state->ndc_to_screen.rows[0][1] = 0;
+            game_state->ndc_to_screen.rows[0][2] = 0;
+            game_state->ndc_to_screen.rows[0][3] = half_width + screen_offset_x;
 
-        game_state->ndc_to_screen.rows[1][0] = 0;
-        game_state->ndc_to_screen.rows[1][1] = -half_height;
-        game_state->ndc_to_screen.rows[1][2] = 0;
-        game_state->ndc_to_screen.rows[1][3] = half_height + screen_offset_y;
+            game_state->ndc_to_screen.rows[1][0] = 0;
+            game_state->ndc_to_screen.rows[1][1] = -half_height;
+            game_state->ndc_to_screen.rows[1][2] = 0;
+            game_state->ndc_to_screen.rows[1][3] = half_height + screen_offset_y;
 
-        // z is a special case since we want to use it for depth testing later.
-        // We want it to range from [0, depth] where depth usually = 1.
-        float depth = 1.0f;
-        float half_depth = depth / 2;
-        game_state->ndc_to_screen.rows[2][0] = 0;
-        game_state->ndc_to_screen.rows[2][1] = 0;
-        game_state->ndc_to_screen.rows[2][2] = half_depth;
-        game_state->ndc_to_screen.rows[2][3] = half_depth;
+            // z is a special case since we want to use it for depth testing later.
+            // We want it to range from [0, depth] where depth usually = 1.
+            float depth = 1.0f;
+            float half_depth = depth / 2;
+            game_state->ndc_to_screen.rows[2][0] = 0;
+            game_state->ndc_to_screen.rows[2][1] = 0;
+            game_state->ndc_to_screen.rows[2][2] = half_depth;
+            game_state->ndc_to_screen.rows[2][3] = half_depth;
 
-        game_state->ndc_to_screen.rows[3][0] = 0;
-        game_state->ndc_to_screen.rows[3][1] = 0;
-        game_state->ndc_to_screen.rows[3][2] = 0;
-        game_state->ndc_to_screen.rows[3][3] = 1;
-    }
-
-    Vec3 cam_motion = {};
-    // FIXME(ryan): I want +Z to be forward but it's kinda backward right now.
-    // i.e. W should move the cam forward ALWAYS
-    if (input->keys_down[GAME_KEY_W]) cam_motion.z -= 0.1f;
-    if (input->keys_down[GAME_KEY_S]) cam_motion.z += 0.1f;
-    if (input->keys_down[GAME_KEY_A]) cam_motion.x -= 0.1f;
-    if (input->keys_down[GAME_KEY_D]) cam_motion.x += 0.1f;
-
-    if (input->keys_down[GAME_KEY_J]) game_state->cam_yaw   += 2.0f;
-    if (input->keys_down[GAME_KEY_L]) game_state->cam_yaw   -= 2.0f;
-    if (input->keys_down[GAME_KEY_I]) game_state->cam_pitch += 2.0f;
-    if (input->keys_down[GAME_KEY_K]) game_state->cam_pitch -= 2.0f;
-
-    float cam_yaw_rad = degrees_to_radians(game_state->cam_yaw);
-    float cam_yaw_cos = (float)cos(cam_yaw_rad);
-    float cam_yaw_sin = (float)sin(cam_yaw_rad);
-    float cam_pitch_rad = degrees_to_radians(game_state->cam_pitch);
-    float cam_pitch_cos = (float)cos(cam_pitch_rad);
-    float cam_pitch_sin = (float)sin(cam_pitch_rad);
-    Mat3x3 cam_rotation = {};
-    // If Rx is a rotation about the x axis and Ry is a rotation about the y axis,
-    // then the upper 3x3 of the cam_transform is RxRy (rotate y first, then x)
-    cam_rotation.rows[0][0] = cam_yaw_cos; cam_rotation.rows[0][1] = 0;
-    cam_rotation.rows[0][2] = cam_yaw_sin;
-    cam_rotation.rows[1][0] = cam_pitch_sin * cam_yaw_sin;
-    cam_rotation.rows[1][1] = cam_pitch_cos;
-    cam_rotation.rows[1][2] = cam_pitch_sin * -cam_yaw_cos;
-    cam_rotation.rows[2][0] = -cam_pitch_cos * cam_yaw_sin;
-    cam_rotation.rows[2][1] = cam_pitch_sin;
-    cam_rotation.rows[2][2] = cam_pitch_cos * cam_yaw_cos;
-
-    game_state->cam_world_pos = vec3_add(game_state->cam_world_pos, mult_mat3x3_vec3(cam_rotation, cam_motion));
-
-    Mat3x3 cam_rotation_transpose = mat3x3_transpose(cam_rotation);
-    Vec3 cam_translation_inverse = vec3_negate(mult_mat3x3_vec3(cam_rotation_transpose, game_state->cam_world_pos));
-    Mat4x4 world_to_view = {};
-    // Copy inverse cam rotation to upper 3x3
-    for (int r = 0; r < 3; r++) {
-        for (int c = 0; c < 3; c++) {
-            world_to_view.rows[r][c] = cam_rotation_transpose.rows[r][c];
+            game_state->ndc_to_screen.rows[3][0] = 0;
+            game_state->ndc_to_screen.rows[3][1] = 0;
+            game_state->ndc_to_screen.rows[3][2] = 0;
+            game_state->ndc_to_screen.rows[3][3] = 1;
         }
     }
-    // Set inverse cam translation
-    world_to_view.rows[0][3] = cam_translation_inverse.x;
-    world_to_view.rows[1][3] = cam_translation_inverse.y;
-    world_to_view.rows[2][3] = cam_translation_inverse.z;
+
+    Vec3 camera_local_motion = {};
+    if (input->keys_down[GAME_KEY_W]) { camera_local_motion.z += 0.1f; }
+    if (input->keys_down[GAME_KEY_S]) { camera_local_motion.z -= 0.1f; }
+    // FIXME(ryan): A and D are backward! I think the cameraera is set up
+    // incorrectly. One of its vectors must be flipped.
+    // NOTE(ryan): Temporarily account for this by changing the sign of the ops.
+    if (input->keys_down[GAME_KEY_A]) { camera_local_motion.x += 0.1f; }
+    if (input->keys_down[GAME_KEY_D]) { camera_local_motion.x -= 0.1f; }
+
+    float camera_yaw = 0.0f;
+    float camera_pitch = 0.0f;
+    if (input->keys_down[GAME_KEY_J]) { camera_yaw += 2.0f; }
+    if (input->keys_down[GAME_KEY_L]) { camera_yaw -= 2.0f; }
+    if (input->keys_down[GAME_KEY_I]) { camera_pitch += 2.0f; }
+    if (input->keys_down[GAME_KEY_K]) { camera_pitch -= 2.0f; }
+
+    Mat3x3 rot_x = mat3x3_create_rotation_x(degrees_to_radians(camera_pitch));
+    Mat3x3 rot_y = mat3x3_create_rotation_y(degrees_to_radians(camera_yaw));
+    game_state->camera_world_rotation = mult_mat3x3_mat3x3(game_state->camera_world_rotation, mult_mat3x3_mat3x3(rot_y, rot_x));
+    game_state->camera_world_position = vec3_add(game_state->camera_world_position, mult_mat3x3_vec3(game_state->camera_world_rotation, camera_local_motion));
+
+    Mat3x3 camera_world_rotation_transpose = mat3x3_transpose(game_state->camera_world_rotation);
+    Vec3 camera_translation_inverse = vec3_negate(mult_mat3x3_vec3(camera_world_rotation_transpose, game_state->camera_world_position));
+    Mat4x4 world_to_view = {};
+    // Copy inverse camera rotation to upper 3x3
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 3; c++) {
+            world_to_view.rows[r][c] = camera_world_rotation_transpose.rows[r][c];
+        }
+    }
+    // Set inverse camera translation
+    world_to_view.rows[0][3] = camera_translation_inverse.x;
+    world_to_view.rows[1][3] = camera_translation_inverse.y;
+    world_to_view.rows[2][3] = camera_translation_inverse.z;
     // Set that one last bit for the translation homogeneous coords
     world_to_view.rows[3][3] = 1;
 
@@ -421,89 +540,35 @@ EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
     }
 
     // Draw cube edges
-    uint32_t *pixels = (uint32_t *)offscreen_buffer->memory;
+    #define SCRATCH_LEN 256u
+    Point scratch[SCRATCH_LEN];
     for (int i = 0; i < 24; i += 4) {
         size_t v_index_0 = cube_edges[i];
         int v0x = (int)screen_space_cube_verts[v_index_0].x;
         int v0y = (int)screen_space_cube_verts[v_index_0].y;
+        float v0z = screen_space_cube_verts[v_index_0].z;
 
         size_t v_index_1 = cube_edges[i + 1];
         int v1x = (int)screen_space_cube_verts[v_index_1].x;
         int v1y = (int)screen_space_cube_verts[v_index_1].y;
+        float v1z = screen_space_cube_verts[v_index_1].z;
 
         size_t v_index_2 = cube_edges[i + 2];
         int v2x = (int)screen_space_cube_verts[v_index_2].x;
         int v2y = (int)screen_space_cube_verts[v_index_2].y;
+        float v2z = screen_space_cube_verts[v_index_2].z;
 
         size_t v_index_3 = cube_edges[i + 3];
         int v3x = (int)screen_space_cube_verts[v_index_3].x;
         int v3y = (int)screen_space_cube_verts[v_index_3].y;
+        float v3z = screen_space_cube_verts[v_index_3].z;
 
-        Point scratch[256];
-        size_t num_points = 0;
-
-        // v0 -> v1
-        num_points = bresenham(scratch, 256, v0x, v0y, v1x, v1y);
-        for (int p_i = 0; p_i < num_points; p_i++) {
-            Point p = scratch[p_i];
-            if (
-                p.x >= 0 && p.x < offscreen_buffer->width &&
-                p.y >= 0 && p.y < offscreen_buffer->height
-            )
-            {
-                pixels[p.x + p.y * offscreen_buffer->width] = EDGE_COLOR;
-            }
-        }
-
-        // v1 -> v2
-        num_points = bresenham(scratch, 256, v1x, v1y, v2x, v2y);
-        for (int p_i = 0; p_i < num_points; p_i++) {
-            Point p = scratch[p_i];
-            if (
-                p.x >= 0 && p.x < offscreen_buffer->width &&
-                p.y >= 0 && p.y < offscreen_buffer->height
-            )
-            {
-                pixels[p.x + p.y * offscreen_buffer->width] = EDGE_COLOR;
-            }
-        }
-
-        // v2 -> v3
-        num_points = bresenham(scratch, 256, v2x, v2y, v3x, v3y);
-        for (int p_i = 0; p_i < num_points; p_i++) {
-            Point p = scratch[p_i];
-            if (
-                p.x >= 0 && p.x < offscreen_buffer->width &&
-                p.y >= 0 && p.y < offscreen_buffer->height
-            )
-            {
-                pixels[p.x + p.y * offscreen_buffer->width] = EDGE_COLOR;
-            }
-        }
-
-        // v3 -> v0
-        num_points = bresenham(scratch, 256, v3x, v3y, v0x, v0y);
-        for (int p_i = 0; p_i < num_points; p_i++) {
-            Point p = scratch[p_i];
-            if (
-                p.x >= 0 && p.x < offscreen_buffer->width &&
-                p.y >= 0 && p.y < offscreen_buffer->height
-            )
-            {
-                pixels[p.x + p.y * offscreen_buffer->width] = EDGE_COLOR;
-            }
-        }
+        // NOTE(ryan): Super rudimentary clipping to ensure we don't draw stuff that's behind the camera.
+        if (v0z > near && v1z > near) draw_line(offscreen_buffer, scratch, SCRATCH_LEN, v0x, v0y, v1x, v1y, EDGE_COLOR);
+        if (v1z > near && v2z > near) draw_line(offscreen_buffer, scratch, SCRATCH_LEN, v1x, v1y, v2x, v2y, EDGE_COLOR);
+        if (v2z > near && v3z > near) draw_line(offscreen_buffer, scratch, SCRATCH_LEN, v2x, v2y, v3x, v3y, EDGE_COLOR);
+        if (v3z > near && v0z > near) draw_line(offscreen_buffer, scratch, SCRATCH_LEN, v3x, v3y, v0x, v0y, EDGE_COLOR);
     }
-
-    // // Draw vertices
-    // uint32_t *pixels = (uint32_t *)offscreen_buffer->memory;
-    // for (int i = 0; i < 8; i++) {
-    //     int vx = (int)screen_space_cube_verts[i].x;
-    //     int vy = (int)screen_space_cube_verts[i].y;;
-    //     if (vx >= 0 && vx < offscreen_buffer->width && vy >= 0 && vy < offscreen_buffer->height) {
-    //         pixels[vx + vy * offscreen_buffer->width] = EDGE_COLOR;
-    //     }
-    // }
 
 }
 
