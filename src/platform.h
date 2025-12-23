@@ -34,10 +34,15 @@ typedef struct GameOffscreenBuffer {
 // TODO(ryan): add home, end, insert, page up/down, keys?
 typedef enum GameKey {
     // ARROWS
+    // GAME_KEY_UP     = 0x26,
+    // GAME_KEY_DOWN   = 0x27,
+    // GAME_KEY_LEFT   = 0x28,
+    // GAME_KEY_RIGHT  = 0x29,
+
+    GAME_KEY_LEFT   = 0x25,
     GAME_KEY_UP     = 0x26,
-    GAME_KEY_DOWN   = 0x27,
-    GAME_KEY_LEFT   = 0x28,
-    GAME_KEY_RIGHT  = 0x29,
+    GAME_KEY_RIGHT  = 0x27,
+    GAME_KEY_DOWN   = 0x28,
 
     // NUMERIC
     GAME_KEY_0 = 0x30,
