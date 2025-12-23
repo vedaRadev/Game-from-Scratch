@@ -3,6 +3,8 @@
 #include "platform.h"
 
 #define PI 3.14159f
+// TODO(ryan): remove if unused, just added for fun
+#define DEGREES_TO_RADIANS(deg) ((deg) * PI / 180.0f)
 
 inline float degrees_to_radians(float degrees) {
     float result = degrees * PI / 180.0f;
@@ -590,8 +592,15 @@ typedef struct Vertex {
     uint32_t color;       // argb
 } Vertex;
 
+typedef struct Triangle {
+    Vertex vertices[3]; // in local space
+    float position[2];  // (x, y) in world space
+    float rotation;     // degrees in world space
+    float scale;
+} Triangle;
+
 typedef struct GameState {
-    Vertex triangle[3];
+    Triangle triangle;
 } GameState;
 
 // v0 - first vertex, v1 - second vertex, p - test point
@@ -614,45 +623,100 @@ EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
     if (!memory->is_initialized) {
         memory->is_initialized = true;
 
-        game_state->triangle[0] = (Vertex){
-            .coordinates = { 0, (float)offscreen_buffer->height },
-            .color = 0x00FF0000
-        };
-        game_state->triangle[1] = (Vertex){
-            .coordinates = { (float)offscreen_buffer->width, (float)offscreen_buffer->height },
-            .color = 0x0000FF00
-        };
-        game_state->triangle[2] = (Vertex){
-            .coordinates = { (float)offscreen_buffer->width / 2, 0 },
-            .color = 0x000000FF
-        };
+        // Defining triangle vertices in local space, in clockwise winding order
+        // base left
+        game_state->triangle.vertices[0] = (Vertex){ .coordinates = { -1, -1 }, .color = 0x00FF0000 };
+        // top
+        game_state->triangle.vertices[1] = (Vertex){ .coordinates = { 0, 1 }, .color = 0x0000FF00 };
+        // base right
+        game_state->triangle.vertices[2] = (Vertex){ .coordinates = { 1, -1 }, .color = 0x000000FF };
+
+        game_state->triangle.position[0] = offscreen_buffer->width / 2.0f;
+        game_state->triangle.position[1] = offscreen_buffer->height / 2.0f;
     }
 
+    Vertex v0 = game_state->triangle.vertices[0], v1 = game_state->triangle.vertices[1], v2 = game_state->triangle.vertices[2];
+
+    // TODO(ryan): Local and world space (2D) have Y pointing up but screen space has Y pointing down.
+    // Need to include a transformation step that flips the direction of our Y axis!
+
+    // Scale
+    game_state->triangle.scale = 50.0f;
+    v0.coordinates[0] *= game_state->triangle.scale;
+    v0.coordinates[1] *= game_state->triangle.scale;
+    v1.coordinates[0] *= game_state->triangle.scale;
+    v1.coordinates[1] *= game_state->triangle.scale;
+    v2.coordinates[0] *= game_state->triangle.scale;
+    v2.coordinates[1] *= game_state->triangle.scale;
+
+    // Rotate
+    const float rot_speed = 1.5f;
+    if (input->keys_down[GAME_KEY_J]) game_state->triangle.rotation += rot_speed;
+    if (input->keys_down[GAME_KEY_L]) game_state->triangle.rotation -= rot_speed;
+    if (game_state->triangle.rotation > 180.0f) game_state->triangle.rotation -= 360.0f;
+    if (game_state->triangle.rotation < 180.0f) game_state->triangle.rotation += 360.0f;
+    float rot_rad = DEGREES_TO_RADIANS(game_state->triangle.rotation);
+
+    float v0x = v0.coordinates[0], v0y = v0.coordinates[1];
+    float v1x = v1.coordinates[0], v1y = v1.coordinates[1];
+    float v2x = v2.coordinates[0], v2y = v2.coordinates[1];
+    v0.coordinates[0] = v0x * (float)cos(rot_rad) + v0y * -(float)sin(rot_rad);
+    v0.coordinates[1] = v0x * (float)sin(rot_rad) + v0y *  (float)cos(rot_rad);
+    v1.coordinates[0] = v1x * (float)cos(rot_rad) + v1y * -(float)sin(rot_rad);
+    v1.coordinates[1] = v1x * (float)sin(rot_rad) + v1y *  (float)cos(rot_rad);
+    v2.coordinates[0] = v2x * (float)cos(rot_rad) + v2y * -(float)sin(rot_rad);
+    v2.coordinates[1] = v2x * (float)sin(rot_rad) + v2y *  (float)cos(rot_rad);
+    
+    // Translate
+    const float move_speed = 2.5f;
+    if (input->keys_down[GAME_KEY_A]) game_state->triangle.position[0] -= move_speed;
+    if (input->keys_down[GAME_KEY_D]) game_state->triangle.position[0] += move_speed;
+    if (input->keys_down[GAME_KEY_W]) game_state->triangle.position[1] += move_speed;
+    if (input->keys_down[GAME_KEY_S]) game_state->triangle.position[1] -= move_speed;
+
+    v0.coordinates[0] += game_state->triangle.position[0];
+    v0.coordinates[1] += game_state->triangle.position[1];
+    v1.coordinates[0] += game_state->triangle.position[0];
+    v1.coordinates[1] += game_state->triangle.position[1];
+    v2.coordinates[0] += game_state->triangle.position[0];
+    v2.coordinates[1] += game_state->triangle.position[1];
+
+    // Flip our Y coordinate to be in screen space (+Y is down)
+    v0.coordinates[1] = -v0.coordinates[1] + offscreen_buffer->height;
+    v1.coordinates[1] = -v1.coordinates[1] + offscreen_buffer->height;
+    v2.coordinates[1] = -v2.coordinates[1] + offscreen_buffer->height;
+
+    // NOTE(ryan): because we have now essentially mirrored our triangle across
+    // the X axis the winding order of our vertices has technically changed, so
+    // we need to feed the vertices in backward!
+    Vertex vs[3] = { v2, v1, v0 }; // FIXME(ryan): Being lazy and copying here
+
+    float area = edge_function(vs[0].coordinates, vs[1].coordinates, vs[2].coordinates);
     // NOTE(ryan): NOT optimized!
     // TODO(ryan): Optimization: only loop over pixels within the AABB of the triangle.
     uint32_t *pixels = (uint32_t *)offscreen_buffer->memory;
-    Vertex *triangle = game_state->triangle;
-    float area = edge_function(triangle[0].coordinates, triangle[1].coordinates, triangle[2].coordinates);
     for (int row = 0; row < offscreen_buffer->height; row++) {
         for (int col = 0; col < offscreen_buffer->width; col++) {
             // float p[2] = { (float)col + 0.5f, (float)row + 0.5f }; // testing pixel _centers_, hence the +0.5
             float p[2] = { (float)col, (float)row }; // NOTE(ryan): This is testing the upper left
                                                      // of a pixel, not its center (for some reason
                                                      // this looks better at the moment).
-            float w0   = edge_function(triangle[1].coordinates, triangle[2].coordinates, p);
-            float w1   = edge_function(triangle[2].coordinates, triangle[0].coordinates, p);
-            float w2   = edge_function(triangle[0].coordinates, triangle[1].coordinates, p);
+            float w0 = edge_function(vs[1].coordinates, vs[2].coordinates, p);
+            float w1 = edge_function(vs[2].coordinates, vs[0].coordinates, p);
+            float w2 = edge_function(vs[0].coordinates, vs[1].coordinates, p);
+            size_t pixel_index = col + row * offscreen_buffer->width;
+            pixels[pixel_index] = 0; // set to black
             if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
-                // If p was inside the triangle, compute its barycentric coordinates for vertex
+                // If p was inside the triangle_vertices, compute its barycentric coordinates for vertex
                 // attribute interpolation.
                 w0 /= area;
                 w1 /= area;
                 w2 /= area;
 
-                // Interpolate the color based on the three triangle vertices
-                float red   = w0 * ((triangle[0].color >> 16) & 0xFF) + w1 * ((triangle[1].color >> 16) & 0xFF) + w2 * ((triangle[2].color >> 16) & 0xFF);
-                float green = w0 * ((triangle[0].color >> 8)  & 0xFF) + w1 * ((triangle[1].color >> 8)  & 0xFF) + w2 * ((triangle[2].color >> 8) & 0xFF);
-                float blue  = w0 *  (triangle[0].color        & 0xFF) + w1 *  (triangle[1].color        & 0xFF) + w2 *  (triangle[2].color & 0xFF);
+                // Interpolate the color based on the three triangle_vertices vertices
+                float red   = w0 * ((vs[0].color >> 16) & 0xFF) + w1 * ((vs[1].color >> 16) & 0xFF) + w2 * ((vs[2].color >> 16) & 0xFF);
+                float green = w0 * ((vs[0].color >> 8)  & 0xFF) + w1 * ((vs[1].color >> 8)  & 0xFF) + w2 * ((vs[2].color >> 8)  & 0xFF);
+                float blue  = w0 *  (vs[0].color        & 0xFF) + w1 *  (vs[1].color        & 0xFF) + w2 *  (vs[2].color & 0xFF);
 
                 uint8_t red_byte = (uint8_t)red;
                 uint8_t blue_byte = (uint8_t)blue;
