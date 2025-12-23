@@ -614,14 +614,18 @@ EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
     if (!memory->is_initialized) {
         memory->is_initialized = true;
 
-        Vertex v0 = { .coordinates = { 0, (float)offscreen_buffer->height }, .color = 0x00FF0000 };
-        game_state->triangle[0] = v0;
-
-        Vertex v1 = { .coordinates = { (float)offscreen_buffer->width / 2, 0 }, .color = 0x0000FF00 };
-        game_state->triangle[1] = v1;
-
-        Vertex v2 = { .coordinates = { (float)offscreen_buffer->width, (float)offscreen_buffer->height }, .color = 0x000000FF };
-        game_state->triangle[2] = v2;
+        game_state->triangle[0] = (Vertex){
+            .coordinates = { 0, (float)offscreen_buffer->height },
+            .color = 0x00FF0000
+        };
+        game_state->triangle[1] = (Vertex){
+            .coordinates = { (float)offscreen_buffer->width, (float)offscreen_buffer->height },
+            .color = 0x0000FF00
+        };
+        game_state->triangle[2] = (Vertex){
+            .coordinates = { (float)offscreen_buffer->width / 2, 0 },
+            .color = 0x000000FF
+        };
     }
 
     // NOTE(ryan): NOT optimized!
@@ -632,17 +636,13 @@ EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
     for (int row = 0; row < offscreen_buffer->height; row++) {
         for (int col = 0; col < offscreen_buffer->width; col++) {
             // float p[2] = { (float)col + 0.5f, (float)row + 0.5f }; // testing pixel _centers_, hence the +0.5
-            float p[2] = { (float)col, (float)row }; 
+            float p[2] = { (float)col, (float)row }; // NOTE(ryan): This is testing the upper left
+                                                     // of a pixel, not its center (for some reason
+                                                     // this looks better at the moment).
             float w0   = edge_function(triangle[1].coordinates, triangle[2].coordinates, p);
             float w1   = edge_function(triangle[2].coordinates, triangle[0].coordinates, p);
             float w2   = edge_function(triangle[0].coordinates, triangle[1].coordinates, p);
-            // FIXME(ryan): have to check for negative right now because we're working with +Y is
-            // down in our coordinate system. Therefore, the winding order should be inverted
-            // because right now we're technically passing arguments to the edge function in CCW
-            // winding order.
-            // TODO(ryan): maybe we should somehow use a +Y is up coordinate system then flip for
-            // the final draw to the screen buffer?
-            if (w0 <= 0 && w1 <= 0 && w2 <= 0) {
+            if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
                 // If p was inside the triangle, compute its barycentric coordinates for vertex
                 // attribute interpolation.
                 w0 /= area;

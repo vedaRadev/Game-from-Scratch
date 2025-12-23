@@ -232,10 +232,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     ShowWindow(game_window, cmd_show);
 
     // Pixels are stored as 0x00RRGGBB with windows
-    // offscreen_buffer.width = 320;
-    // offscreen_buffer.height = 200;
-    offscreen_buffer.width = 16 * 4;
-    offscreen_buffer.height = 9 * 4;
+    offscreen_buffer.width = 320;
+    offscreen_buffer.height = 200;
+    // offscreen_buffer.width = 16 * 4;
+    // offscreen_buffer.height = 9 * 4;
     offscreen_buffer.bytes_per_pixel = 4; // 1 byte per color component (RGB) + 1 byte padding (align to 32-bit boundary)
     // TODO(ryan): check if this fails and handle gracefully
     offscreen_buffer.memory = VirtualAlloc(
