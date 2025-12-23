@@ -8,6 +8,7 @@
 // TODO(ryan): maybe move common types and "#define"s into a separate file? Not sure if
 // I'm going to do a unity build or not yet.
 #include <stdint.h>
+// TODO(ryan): Instead of this, maybe make types b8, b16, b32, b64 etc.
 typedef enum { false, true } bool;
 
 // TODO(ryan): If not unity build, move into own file?
@@ -16,9 +17,9 @@ typedef enum { false, true } bool;
 // use the __FILE__ and __LINE__ macros to report when an assertion fails, then use some inline
 // assembly that will break to a debugger if one is attached.
 #ifdef ASSERTIONS_ENABLED
-#   define assert(expr) if (!(expr)) { *(volatile int *)0; }
+    #define assert(expr) if (!(expr)) { *(volatile int *)0; }
 #else
-#   define assert(expr)
+    #define assert(expr)
 #endif
 
 typedef struct GameOffscreenBuffer {
@@ -33,10 +34,10 @@ typedef struct GameOffscreenBuffer {
 // TODO(ryan): add home, end, insert, page up/down, keys?
 typedef enum GameKey {
     // ARROWS
-    GAME_KEY_UP = 0x26,
-    GAME_KEY_DOWN = 0x27,
-    GAME_KEY_LEFT = 0x28,
-    GAME_KEY_RIGHT = 0x29,
+    GAME_KEY_UP     = 0x26,
+    GAME_KEY_DOWN   = 0x27,
+    GAME_KEY_LEFT   = 0x28,
+    GAME_KEY_RIGHT  = 0x29,
 
     // NUMERIC
     GAME_KEY_0 = 0x30,
@@ -79,49 +80,49 @@ typedef enum GameKey {
     GAME_KEY_Z = 0x5A,
 
     // PUNCTUATION
-    GAME_KEY_TAB = 0x09,
-    GAME_KEY_SPACE = 0x20,
-    GAME_KEY_SEMICOLON = 0xBA,
-    GAME_KEY_EQUAL = 0xBB,
-    GAME_KEY_COMMA = 0xBC,
-    GAME_KEY_MINUS = 0xBD,
-    GAME_KEY_PERIOD = 0xBE,
-    GAME_KEY_FORWARD_SLASH = 0xBF,
-    GAME_KEY_GRAVE = 0xC0,
-    GAME_KEY_BRACKET_L = 0xDB,
-    GAME_KEY_BACKSLASH = 0xDC,
-    GAME_KEY_BRACKET_R = 0xDD,
-    GAME_KEY_QUOTE = 0xDE,
+    GAME_KEY_TAB            = 0x09,
+    GAME_KEY_SPACE          = 0x20,
+    GAME_KEY_SEMICOLON      = 0xBA,
+    GAME_KEY_EQUAL          = 0xBB,
+    GAME_KEY_COMMA          = 0xBC,
+    GAME_KEY_MINUS          = 0xBD,
+    GAME_KEY_PERIOD         = 0xBE,
+    GAME_KEY_FORWARD_SLASH  = 0xBF,
+    GAME_KEY_GRAVE          = 0xC0,
+    GAME_KEY_BRACKET_L      = 0xDB,
+    GAME_KEY_BACKSLASH      = 0xDC,
+    GAME_KEY_BRACKET_R      = 0xDD,
+    GAME_KEY_QUOTE          = 0xDE,
 
     // FUNCTION
-    GAME_KEY_F1 = 0x70,
-    GAME_KEY_F2 = 0x71,
-    GAME_KEY_F3 = 0x72,
-    GAME_KEY_F4 = 0x73,
-    GAME_KEY_F5 = 0x74,
-    GAME_KEY_F6 = 0x75,
-    GAME_KEY_F7 = 0x76,
-    GAME_KEY_F8 = 0x77,
-    GAME_KEY_F9 = 0x78,
-    GAME_KEY_F10 = 0x79,
-    GAME_KEY_F11 = 0x7A,
-    GAME_KEY_F12 = 0x7B,
+    GAME_KEY_F1     = 0x70,
+    GAME_KEY_F2     = 0x71,
+    GAME_KEY_F3     = 0x72,
+    GAME_KEY_F4     = 0x73,
+    GAME_KEY_F5     = 0x74,
+    GAME_KEY_F6     = 0x75,
+    GAME_KEY_F7     = 0x76,
+    GAME_KEY_F8     = 0x77,
+    GAME_KEY_F9     = 0x78,
+    GAME_KEY_F10    = 0x79,
+    GAME_KEY_F11    = 0x7A,
+    GAME_KEY_F12    = 0x7B,
 
     // MISC
-    GAME_KEY_ESCAPE = 0x1B,
-    GAME_KEY_BACKSPACE = 0x08,
-    GAME_KEY_DELETE = 0x2E,
-    GAME_KEY_CAPS = 0x14,
-    GAME_KEY_SHIFT = 0x10,
-    GAME_KEY_SHIFT_L = 0xA0,
-    GAME_KEY_SHIFT_R = 0xA1,
-    GAME_KEY_ALT = 0x12,
-    GAME_KEY_ALT_L = 0xA4,
-    GAME_KEY_ALT_R = 0xA5,
-    GAME_KEY_CTRL = 0x11,
-    GAME_KEY_CTRL_L = 0xA2,
-    GAME_KEY_CTRL_R = 0xA3,
-    GAME_KEY_ENTER = 0x0D,
+    GAME_KEY_ESCAPE     = 0x1B,
+    GAME_KEY_BACKSPACE  = 0x08,
+    GAME_KEY_DELETE     = 0x2E,
+    GAME_KEY_CAPS       = 0x14,
+    GAME_KEY_SHIFT      = 0x10,
+    GAME_KEY_SHIFT_L    = 0xA0,
+    GAME_KEY_SHIFT_R    = 0xA1,
+    GAME_KEY_ALT        = 0x12,
+    GAME_KEY_ALT_L      = 0xA4,
+    GAME_KEY_ALT_R      = 0xA5,
+    GAME_KEY_CTRL       = 0x11,
+    GAME_KEY_CTRL_L     = 0xA2,
+    GAME_KEY_CTRL_R     = 0xA3,
+    GAME_KEY_ENTER      = 0x0D,
 } GameKey;
 
 typedef struct GameInput {
@@ -139,7 +140,7 @@ typedef struct GameMemory {
 #ifdef _MSC_VER
     // TODO(ryan): document why we don't have to declare __declspec(dllexport/dllimport) when using MSVC
     // (reminder: we're declaring -EXPORT:func_name to the linker in our build script)
-#   define EXPORT
+    #define EXPORT
 #endif
 
 // TODO(ryan): not sure if I like this approach.
