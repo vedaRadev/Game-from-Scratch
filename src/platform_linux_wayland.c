@@ -1,3 +1,17 @@
+// FIXME's and TODO's
+// - Get current path to exe then construct path to the shared game lib, use that when loading game code!
+//   At the moment CWD must be set to the build dir.
+//
+// - Implement hot reloading.
+//
+// - Grab keyboard input and send to game update.
+//   Probably will have to map keys to fit the windows keycodes.
+//
+// - Need to put our game code and memory into the state that we're passing around to our wayland callbacks.
+//   Then we'll be able to re-render immediately in response to toplevel/surface config events.
+//   Though how often will a user e.g. be resizing the window and be like "damn I wish the screen
+//   didn't flicker while doing this :("?
+
 #define _POSIX_C_SOURCE 200112L
 
 #include "platform.h"
@@ -14,6 +28,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <dlfcn.h>
 
 #include <stdio.h>
 #include <stdint.h>
@@ -616,6 +631,38 @@ const struct wl_registry_listener registry_listener = {
 	.global_remove = registry_handle_global_remove,
 };
 
+//////////////////////////////////////////////////
+// GAME AND NON-WAYLAND STUFF
+//////////////////////////////////////////////////
+
+typedef struct GameCode {
+	void *lib_handle;
+	GameInitFunction game_init;
+	GameRenderFunction game_render;
+	GameUpdateFunction game_update;
+} GameCode;
+
+// TODO(ryan): error handling
+GameCode load_game_code() {
+	GameCode game_code = {0};
+
+	game_code.lib_handle = dlopen("./game.so", RTLD_NOW);
+	char *err = dlerror();
+	// TODO(ryan): print error with dlerror probably (maybe pull in my nice little assert methods
+	// I've written in other places. They use printf though but whatever)
+	assert(game_code.lib_handle);
+
+	game_code.game_init   = dlsym(game_code.lib_handle, "game_init");
+	game_code.game_update = dlsym(game_code.lib_handle, "game_update");
+	game_code.game_render = dlsym(game_code.lib_handle, "game_render");
+
+	assert(game_code.game_init);
+	assert(game_code.game_update);
+	assert(game_code.game_render);
+
+	return game_code;
+}
+
 int main() {
 	#define NBUFFERS 1 // just single buffering at the moment
 
@@ -680,6 +727,16 @@ int main() {
 	struct itimerspec update_timer_spec   = { .it_value = update_timer_value, .it_interval = update_timer_interval };
 	timerfd_settime(update_timer_fd, 0, &update_timer_spec, NULL);
 
+	GameCode game_code = load_game_code();
+
+	GameMemory game_memory = {0};
+	game_memory.storage_size = 4ul * 1024ul * 1024ul;
+	game_memory.storage = mmap(NULL, game_memory.storage_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+	GameInput game_input = {0};
+
+	game_code.game_init(&game_memory, client_state.width, client_state.height);
+
 	#define WAYLAND_DISPLAY_POLL 0
 	#define UPDATE_TIMER_POLL    1
 	struct pollfd pollfds[] = {
@@ -728,7 +785,7 @@ int main() {
 			// If we don't read the timer the POLLIN revents bit will never be cleared
 			read(pollfds[UPDATE_TIMER_POLL].fd, &expirations, sizeof(expirations));
 
-			// TODO(mal): Update game here
+			game_code.game_update(&game_memory, &game_input);
 
 			needs_draw = 1;
 		}
@@ -742,7 +799,7 @@ int main() {
 			game_offscreen_buffer.height          = client_state.height;
 			game_offscreen_buffer.bytes_per_pixel = client_state.bytes_per_pixel;
 
-			// FIXME(mal): Send to game to draw here
+			game_code.game_render(&game_memory, &game_offscreen_buffer);
 
 			// Request a new callback
 			// IMPORTANT(mal): We have to request a surface frame BEFORE we commit the surface!

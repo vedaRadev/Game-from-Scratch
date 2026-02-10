@@ -156,15 +156,15 @@ typedef struct GameMemory {
 
 #define GAME_INIT_PARAMS (GameMemory *memory, int initial_width, int initial_height)
 void game_init GAME_INIT_PARAMS;
-typedef void (*GameInit) GAME_INIT_PARAMS;
+typedef void (*GameInitFunction) GAME_INIT_PARAMS;
 
 #define GAME_RENDER_PARAMS (GameMemory *memory, GameOffscreenBuffer *offscreen_buffer)
 void game_render GAME_RENDER_PARAMS;
-typedef void (*GameRender) GAME_RENDER_PARAMS;
+typedef void (*GameRenderFunction) GAME_RENDER_PARAMS;
 
 #define GAME_UPDATE_PARAMS (GameMemory *memory, GameInput *input)
 void game_update GAME_UPDATE_PARAMS;
-typedef void (*GameUpdate) GAME_UPDATE_PARAMS;
+typedef void (*GameUpdateFunction) GAME_UPDATE_PARAMS;
 
 // // NOTE(ryan): Just leaving the old way of doing this here in case I want to go back to it
 // #define GAME_UPDATE_AND_RENDER_SIGNATURE(func_name) void func_name(GameOffscreenBuffer *offscreen_buffer, GameInput *input, GameMemory *memory)
