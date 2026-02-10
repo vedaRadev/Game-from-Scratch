@@ -1,6 +1,8 @@
 #include <stdint.h>
 #include <math.h> // TODO(ryan): remove this eventually, NO STANDARD LIBRARY
 #include "platform.h"
+// NOTE(ryan): Only on Linux, probably wrap this in a #if (something)
+#include <stdlib.h> // for abs at the moment
 
 #define PI 3.14159f
 // TODO(ryan): remove if unused, just added for fun
@@ -727,4 +729,3 @@ EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
         }
     }
 }
-

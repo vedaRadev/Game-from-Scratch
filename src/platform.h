@@ -8,6 +8,7 @@
 // TODO(ryan): maybe move common types and "#define"s into a separate file? Not sure if
 // I'm going to do a unity build or not yet.
 #include <stdint.h>
+#include <stddef.h>
 // TODO(ryan): Instead of this, maybe make types b8, b16, b32, b64 etc.
 typedef enum { false, true } bool;
 
@@ -142,10 +143,15 @@ typedef struct GameMemory {
     size_t storage_size;
 } GameMemory;
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER)
     // TODO(ryan): document why we don't have to declare __declspec(dllexport/dllimport) when using MSVC
     // (reminder: we're declaring -EXPORT:func_name to the linker in our build script)
     #define EXPORT
+#elif defined(__GNUC__)
+	#define EXPORT __attribute__((visibility("default")))
+#else
+	#define EXPORT
+	#pragma warning Unknown dynamic link import/export semantics
 #endif
 
 // TODO(ryan): not sure if I like this approach.
