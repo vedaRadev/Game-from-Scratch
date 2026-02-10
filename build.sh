@@ -16,7 +16,8 @@ build_game() {
 
 	DEBUG_COMPILER_FLAGS="-O0 -g3 -DASSERTIONS_ENABLED"
 	COMMON_COMPILER_FLAGS="-std=c17 $DEBUG_COMPILER_FLAGS -ffast-math\
-		-Wall -Wextra -Werror -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable"
+		-Wall -Wextra -Werror\
+		-Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Wno-sign-compare"
 	# --gc-sections = dead code elimination
 	COMMON_LINKER_FLAGS=-Wl,--gc-sections
 
