@@ -180,7 +180,7 @@ const struct xdg_wm_base_listener xdg_wm_base_listener = {
 // XDG_SURFACE_LISTENER
 //////////////////////////////////////////////////
 void xdg_surface_configure(void *data, struct xdg_surface *xdg_surface, uint32_t serial) {
-	// TODO(ryan): Do we want to handle an initial draw here or something just so we can get a
+	// TODO(mal): Do we want to handle an initial draw here or something just so we can get a
 	// window to appear right away? Maybe set a "needs_initial_draw" var in main() and do something
 	// here?
 	ClientState *state = data;
@@ -642,13 +642,13 @@ typedef struct GameCode {
 	GameUpdateFunction game_update;
 } GameCode;
 
-// TODO(ryan): error handling
+// TODO(mal): error handling
 GameCode load_game_code() {
 	GameCode game_code = {0};
 
 	game_code.lib_handle = dlopen("./game.so", RTLD_NOW);
 	char *err = dlerror();
-	// TODO(ryan): print error with dlerror probably (maybe pull in my nice little assert methods
+	// TODO(mal): print error with dlerror probably (maybe pull in my nice little assert methods
 	// I've written in other places. They use printf though but whatever)
 	assert(game_code.lib_handle);
 

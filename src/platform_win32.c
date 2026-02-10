@@ -19,17 +19,17 @@ static bool game_is_running = false;
 static OffscreenBuffer offscreen_buffer;
 static uint64_t wall_clock_frequency; // Performance counter ticks per second
 
-// TODO(ryan): Build custom wstring type that allows for things like slices?
+// TODO(mal): Build custom wstring type that allows for things like slices?
 
-// TODO(ryan): Testing
+// TODO(mal): Testing
 void copy_wstring(wchar_t *src, size_t src_len, wchar_t *dst, size_t dst_len) {
     for (size_t i = 0; i < src_len && i < dst_len; i++) {
         *dst++ = *src++;
     }
 }
 
-// TODO(ryan): Testing
-// TODO(ryan): Probably a way to make this faster if needed. Initial thought is to maybe use a
+// TODO(mal): Testing
+// TODO(mal): Probably a way to make this faster if needed. Initial thought is to maybe use a
 // single loop to copy both s1 and s2 at once into the proper positions at dst? Maybe it'll increase
 // a little bit of ILP if the compiler doesn't do it for us?
 void concat_wstrings(
@@ -51,7 +51,7 @@ void concat_wstrings(
 GameCode load_game_code(const wchar_t *game_dll_path, const wchar_t *game_temp_dll_path, const wchar_t *game_dll_lock_path) {
     GameCode game_code = {};
 
-    // NOTE(ryan): Our build script should create a dummy file before building the game dll and
+    // NOTE(mal): Our build script should create a dummy file before building the game dll and
     // remove it after the dll build is finished. This guarantees that the OS has time to properly
     // update the game dll file contents in the file system cache before we try to load it.
     WIN32_FILE_ATTRIBUTE_DATA ignored;
@@ -84,7 +84,7 @@ WindowClientDimensions get_window_client_dimensions(HWND window) {
 }
 
 void display_offscreen_buffer_in_window(OffscreenBuffer *buffer, HDC window_device_context, int client_width, int client_height) {
-    // TODO(ryan): only clear the parts of the screen we AREN'T using
+    // TODO(mal): only clear the parts of the screen we AREN'T using
     // e.g. if we're drawing to only a portion of the screen and have black bars
     // (think 4:3 fullscreen on a 16:9 monitor)
     // PatBlt(device_context, 0, 0, client_width, client_height, BLACKNESS);
@@ -118,7 +118,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM w_param, LPARAM l
     LRESULT result = 0;
 
     switch (message) {
-        // TODO(ryan): Should we handle this?
+        // TODO(mal): Should we handle this?
         // case WM_ACTIVATEAPP:
         //     break;
 
@@ -130,7 +130,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM w_param, LPARAM l
             EndPaint(window, &ps);
             break;
 
-        case WM_CLOSE: // TODO(ryan): handle WM_CLOSE as an error and recreate the window
+        case WM_CLOSE: // TODO(mal): handle WM_CLOSE as an error and recreate the window
         case WM_DESTROY:
             game_is_running = false;
             break;
@@ -147,7 +147,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     WNDCLASSW game_window_class = {
         .lpfnWndProc = window_proc,
         .hInstance = instance,
-        // TODO(ryan): Better window class name
+        // TODO(mal): Better window class name
         .lpszClassName = L"GameWindowClass",
     };
     if (!RegisterClassW(&game_window_class)) {
@@ -155,8 +155,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
         return 1;
     }
 
-    // TODO(ryan): clean up the following section
-    // FIXME(ryan): do NOT use MAX_PATH. It has a hard limit of 260 characters and will often fail
+    // TODO(mal): clean up the following section
+    // FIXME(mal): do NOT use MAX_PATH. It has a hard limit of 260 characters and will often fail
     // if people are installing the game deep in their filesystem. A solution for this is to use
     // dynamically-sized buffers but I'll have to write those myself later on.
     wchar_t exe_path[MAX_PATH];
@@ -165,7 +165,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     // SAFETY: This works because the bit pattern for L'\\' will never appear in a surrogate pair.
     // The value of L'\\' is 0x005C.
     // Surrogate pair bit patterns range from [D800, DBFF] (high) and [DC00, DFFF].
-    // NOTE(ryan): Also I believe there should always be at least one slash in any value we get from
+    // NOTE(mal): Also I believe there should always be at least one slash in any value we get from
     // GetModuleFileNameW so we don't have to worry about checking for null terminator (though maybe
     // we should, we'd just have to be careful about false positive null terminators (maybe iterate
     // two bytes at a time?))
@@ -173,12 +173,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
         if (*scan == L'\\') one_past_last_slash = scan + 1;
     }
     if (!one_past_last_slash) {
-        // TODO(ryan): show a message or something then quit
+        // TODO(mal): show a message or something then quit
         // Maybe assert here?
         // Can this ever even fail? Can we have a case where there's no backslash???
         return 1;
     }
-    // TODO(ryan): do we need the base_dir_path anymore? It's kind of left over from when I was
+    // TODO(mal): do we need the base_dir_path anymore? It's kind of left over from when I was
     // trying a few different things out and needed a null-terminated base_dir_path for some win32
     // calls. Could go back to constructing exe dir paths with just the exe_path and the
     // one_past_last_slash - exe_path length calculation.
@@ -186,7 +186,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     size_t base_dir_path_len = one_past_last_slash - exe_path;
     wchar_t game_dll_path[MAX_PATH];
     wchar_t game_dll_lock_path[MAX_PATH];
-    // TODO(ryan): better name for this? Maybe game_dev_dll_path?
+    // TODO(mal): better name for this? Maybe game_dev_dll_path?
     wchar_t game_temp_dll_path[MAX_PATH];
     concat_wstrings(
         exe_path, base_dir_path_len,
@@ -208,15 +208,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
         L"game_temp.dll", sizeof(L"game_temp.dll"),
         game_temp_dll_path, sizeof(game_temp_dll_path)
     );
-    // TODO(ryan): check if the game dll exists, abort if not?
+    // TODO(mal): check if the game dll exists, abort if not?
 
     GameCode game_code = load_game_code(game_dll_path, game_temp_dll_path, game_dll_lock_path);
 
-    // TODO(ryan): check if there are different options we want to use for anything
+    // TODO(mal): check if there are different options we want to use for anything
     HWND game_window = CreateWindowExW(
         0,
         game_window_class.lpszClassName,
-        // TODO(ryan): different name
+        // TODO(mal): different name
         L"Game From Scratch",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
@@ -237,7 +237,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     // offscreen_buffer.width = 16 * 4;
     // offscreen_buffer.height = 9 * 4;
     offscreen_buffer.bytes_per_pixel = 4; // 1 byte per color component (RGB) + 1 byte padding (align to 32-bit boundary)
-    // TODO(ryan): check if this fails and handle gracefully
+    // TODO(mal): check if this fails and handle gracefully
     offscreen_buffer.memory = VirtualAlloc(
         0,
         offscreen_buffer.width * offscreen_buffer.height * offscreen_buffer.bytes_per_pixel,
@@ -246,7 +246,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     );
     offscreen_buffer.info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     offscreen_buffer.info.bmiHeader.biWidth = offscreen_buffer.width;
-    // NOTE(ryan): When biHeight is negative, windows treats this as a TOPDOWN buffer.
+    // NOTE(mal): When biHeight is negative, windows treats this as a TOPDOWN buffer.
     // i.e. (0, 0) is the upper-left corner of the image. 
     offscreen_buffer.info.bmiHeader.biHeight = -offscreen_buffer.height;
     offscreen_buffer.info.bmiHeader.biPlanes = 1;
@@ -274,7 +274,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     QueryPerformanceFrequency(&query_performance_frequency_result);
     wall_clock_frequency = query_performance_frequency_result.QuadPart;
 
-    // NOTE(ryan): Default sleep granularity is ~16ms. If we do all our work for a frame and have
+    // NOTE(mal): Default sleep granularity is ~16ms. If we do all our work for a frame and have
     // time to spare before hitting our target frametime, we want to sleep the thread to avoid
     // burning CPU cycles. Basically here we're trying to set a finer sleep granularity here. It may
     // or may not happen, in which case we'll just have to spin and burn cycles in the event that we
@@ -282,18 +282,18 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     const UINT DESIRED_SCHEDULER_MS = 1;
     bool is_sleep_granular = timeBeginPeriod(DESIRED_SCHEDULER_MS) == TIMERR_NOERROR;
 
-    // TODO(ryan): We should calculate this based on the monitor refresh rate. Eventually though
+    // TODO(mal): We should calculate this based on the monitor refresh rate. Eventually though
     // we'll want to allow the user to set a framerate limit or allow enable/disable of vsync.
     // Some things we'll want to consider:
     // - Most users nowadays have 1+ monitors
     // - Game might be windowed and dragged from monitor to monitor
     float target_seconds_per_frame = 1.0f / 60.0f;
 
-    // TODO(ryan): we need to be able to set a target framerate and sleep (or
+    // TODO(mal): we need to be able to set a target framerate and sleep (or
     // spin, if we can't make our sleep granular) if we process everything too
     // fast.
     game_is_running = true;
-    // TODO(ryan): should this initialize to 0?
+    // TODO(mal): should this initialize to 0?
     uint64_t frame_start_wall_clock = get_wall_clock();
     GameInput game_input = {};
     while (game_is_running) {
@@ -322,7 +322,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
                         bool is_alt_pressed = (window_message.lParam & (1 << 29));
                         bool is_extended_key = (window_message.lParam & (1 << 24));
 
-                        // TODO(ryan): Should these be handled here in the platform layer or should they
+                        // TODO(mal): Should these be handled here in the platform layer or should they
                         // be handled in the game which then sends some request for the operation to the
                         // platform layer?
                         if (is_down) {
@@ -331,7 +331,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
                             }
 
                             if (virtual_key_code == VK_RETURN && is_alt_pressed) {
-                                // TODO(ryan): toggle fullscreen
+                                // TODO(mal): toggle fullscreen
                             }
                         }
 
@@ -339,7 +339,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
                         if (virtual_key_code == VK_MENU) {
                             game_key = is_extended_key ? GAME_KEY_ALT_R : GAME_KEY_ALT_L;
                         } else if (virtual_key_code == VK_SHIFT) {
-                            // NOTE(ryan): From a comment by Travis Vroman in Kohi source, bits
+                            // NOTE(mal): From a comment by Travis Vroman in Kohi source, bits
                             // indicating key extensions aren't set for shift.
                             uint32_t left_shift = MapVirtualKeyW(VK_LSHIFT, MAPVK_VK_TO_VSC);
                             uint32_t scancode = (window_message.lParam & (0xFF << 16)) >> 16;
@@ -388,12 +388,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
             }
 
             float frame_test_seconds_elapsed = get_seconds_elapsed(get_wall_clock(), frame_start_wall_clock);
-            // TODO(ryan): do want want to check the commented-out code or if our sleep_seconds were 0?
+            // TODO(mal): do want want to check the commented-out code or if our sleep_seconds were 0?
             // If the former, it'll also alert us if we've woken up early from a sleep, which
             // does seem to happen fairly often.
             // if (frame_test_seconds_elapsed < target_seconds_per_frame) {
             if (is_sleep_granular && sleep_seconds <= 0.0f) { 
-                // TODO(ryan): log missed sleep
+                // TODO(mal): log missed sleep
                 OutputDebugStringW(L"Missed sleep!\n");
             }
             while (frame_test_seconds_elapsed < target_seconds_per_frame) {
@@ -401,13 +401,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
             }
 
         } else {
-            // TODO(ryan): log missed target seconds per frame
+            // TODO(mal): log missed target seconds per frame
             // i.e. something really hefty happened this frame!
             OutputDebugStringW(L"We missed our target frame time!\n");
         }
 
         uint64_t frame_end_wall_clock = get_wall_clock();
-        // TODO(ryan): eventually we'll want a way to display this in-game
+        // TODO(mal): eventually we'll want a way to display this in-game
         float frame_ms_elapsed = 1000.0f * get_seconds_elapsed(frame_end_wall_clock, frame_start_wall_clock);
         frame_start_wall_clock = frame_end_wall_clock;
     }

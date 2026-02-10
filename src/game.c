@@ -1,11 +1,11 @@
 #include <stdint.h>
-#include <math.h> // TODO(ryan): remove this eventually, NO STANDARD LIBRARY
+#include <math.h> // TODO(mal): remove this eventually, NO STANDARD LIBRARY
 #include "platform.h"
-// NOTE(ryan): Only on Linux, probably wrap this in a #if (something)
+// NOTE(mal): Only on Linux, probably wrap this in a #if (something)
 #include <stdlib.h> // for abs at the moment
 
 #define PI 3.14159f
-// TODO(ryan): remove if unused, just added for fun
+// TODO(mal): remove if unused, just added for fun
 #define DEGREES_TO_RADIANS(deg) ((deg) * PI / 180.0f)
 
 inline float degrees_to_radians(float degrees) {
@@ -13,9 +13,9 @@ inline float degrees_to_radians(float degrees) {
     return result;
 }
 
-// TODO(ryan): See chapter 4.10 SIMD/Vector Processing in "Game Engine Architecture" for how to
+// TODO(mal): See chapter 4.10 SIMD/Vector Processing in "Game Engine Architecture" for how to
 // implement many of our vector/matrix operations using SSE.
-// TODO(ryan): Some of the Mat4x4 and Mat3x3 ops are very similar in implementation. Is there a way
+// TODO(mal): Some of the Mat4x4 and Mat3x3 ops are very similar in implementation. Is there a way
 // to semantically compress that code?
 
 typedef struct Vec3 {
@@ -72,7 +72,7 @@ Vec3 vec3_cross(Vec3 a, Vec3 b) {
     return result;
 }
 
-// NOTE(ryan): With homogeneous notation, vectors w = 0, points w = 1
+// NOTE(mal): With homogeneous notation, vectors w = 0, points w = 1
 typedef struct Vec4 {
     union {
         float elements[4];
@@ -109,7 +109,7 @@ Vec3 mult_mat3x3_vec3(Mat3x3 m, Vec3 v) {
     return result;
 }
 
-// TODO(ryan): should this be in-place?
+// TODO(mal): should this be in-place?
 // Computes the tranpose of the given matrix.
 Mat3x3 mat3x3_transpose(Mat3x3 m) {
     Mat3x3 result = {};
@@ -214,7 +214,7 @@ typedef struct Mat4x4 {
     };
 } Mat4x4;
 
-// TODO(ryan): should this be in-place?
+// TODO(mal): should this be in-place?
 // Computes the tranpose of the given matrix.
 Mat4x4 mat4x4_transpose(Mat4x4 m) {
     Mat4x4 result = {};
@@ -312,10 +312,10 @@ typedef struct Vertex {
     uint32_t color; 
 } Vertex;
 
-// NOTE(ryan): From "Real Time Rendering" (page 703) -- for max efficiency, the
+// NOTE(mal): From "Real Time Rendering" (page 703) -- for max efficiency, the
 // order of vertices in the vertex buffer should match the order in which they
 // are accessed by the index buffer.
-// TODO(ryan): Make adjustments based on the above information.
+// TODO(mal): Make adjustments based on the above information.
 
 //    4-------5
 //   /|      /|
@@ -356,8 +356,8 @@ static size_t cube_edges[] = {
     3, 7, 6, 2,
 };
 
-// NOTE(ryan): Unused for now.
-// TODO(ryan): Eventually worry about triangle winding order!
+// NOTE(mal): Unused for now.
+// TODO(mal): Eventually worry about triangle winding order!
 static size_t cube_triangles[] = {
     // Front face
     0, 1, 3,
@@ -388,7 +388,7 @@ static uint32_t BACKGROUND_COLOR = 0x00000000;
 static uint32_t EDGE_COLOR       = 0x00FFFFFF;
 
 // OGL style perspective projection
-// NOTE(ryan): In view space, we look down -z
+// NOTE(mal): In view space, we look down -z
 static float vert_fov   = PI / 2.0f;
 static float near       = 1.0f;
 static float far        = 10.0f;
@@ -496,9 +496,9 @@ EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
     Vec3 camera_local_motion = {};
     if (input->keys_down[GAME_KEY_W]) { camera_local_motion.z += 0.1f; }
     if (input->keys_down[GAME_KEY_S]) { camera_local_motion.z -= 0.1f; }
-    // FIXME(ryan): A and D are backward! I think the camera is set up
+    // FIXME(mal): A and D are backward! I think the camera is set up
     // incorrectly. One of its vectors must be flipped.
-    // NOTE(ryan): Temporarily account for this by changing the sign of the ops.
+    // NOTE(mal): Temporarily account for this by changing the sign of the ops.
     if (input->keys_down[GAME_KEY_A]) { camera_local_motion.x += 0.1f; }
     if (input->keys_down[GAME_KEY_D]) { camera_local_motion.x -= 0.1f; }
 
@@ -579,7 +579,7 @@ EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
         int v3y = (int)screen_space_cube_verts[v_index_3].y;
         float v3z = screen_space_cube_verts[v_index_3].z;
 
-        // NOTE(ryan): Super rudimentary clipping to ensure we don't draw stuff that's behind the camera.
+        // NOTE(mal): Super rudimentary clipping to ensure we don't draw stuff that's behind the camera.
         if (v0z > near && v1z > near) draw_line(offscreen_buffer, scratch, SCRATCH_LEN, v0x, v0y, v1x, v1y, EDGE_COLOR);
         if (v1z > near && v2z > near) draw_line(offscreen_buffer, scratch, SCRATCH_LEN, v1x, v1y, v2x, v2y, EDGE_COLOR);
         if (v2z > near && v3z > near) draw_line(offscreen_buffer, scratch, SCRATCH_LEN, v2x, v2y, v3x, v3y, EDGE_COLOR);
@@ -611,7 +611,7 @@ typedef struct GameState {
 // The value is positive if p is on the right side of line (v1 - v0) and negative if on the left.
 // The value is 0 if p is on the line (v1 - v0).
 //
-// NOTE(ryan):
+// NOTE(mal):
 // The value returned by this function is the same as the 2D "cross product" of
 // vectors (p - v0) and (v1 - v0) and the determinant of the 2D matrix formed by
 // the same two vectors.
@@ -622,7 +622,7 @@ float edge_function(float v0[2], float v1[2], float p[2]) {
 
 EXPORT void game_init(GameMemory *memory, int initial_width, int initial_height) {
     GameState *game_state = (GameState *)memory->storage;
-	// NOTE(ryan): Can probably get rid of this check honestly since the platform layer should only
+	// NOTE(mal): Can probably get rid of this check honestly since the platform layer should only
 	// be calling this function once
     if (!memory->is_initialized) {
         memory->is_initialized = true;
@@ -678,19 +678,19 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
     v1.coordinates[1] = -v1.coordinates[1] + offscreen_buffer->height;
     v2.coordinates[1] = -v2.coordinates[1] + offscreen_buffer->height;
 
-    // NOTE(ryan): because we have now essentially mirrored our triangle across
+    // NOTE(mal): because we have now essentially mirrored our triangle across
     // the X axis the winding order of our vertices has technically changed, so
     // we need to feed the vertices in backward!
-    Vertex vs[3] = { v2, v1, v0 }; // FIXME(ryan): Being lazy and copying here
+    Vertex vs[3] = { v2, v1, v0 }; // FIXME(mal): Being lazy and copying here
 
     float area = edge_function(vs[0].coordinates, vs[1].coordinates, vs[2].coordinates);
-    // NOTE(ryan): NOT optimized!
-    // TODO(ryan): Optimization: only loop over pixels within the AABB of the triangle.
+    // NOTE(mal): NOT optimized!
+    // TODO(mal): Optimization: only loop over pixels within the AABB of the triangle.
     uint32_t *pixels = (uint32_t *)offscreen_buffer->memory;
     for (int row = 0; row < offscreen_buffer->height; row++) {
         for (int col = 0; col < offscreen_buffer->width; col++) {
             // float p[2] = { (float)col + 0.5f, (float)row + 0.5f }; // testing pixel _centers_, hence the +0.5
-            float p[2] = { (float)col, (float)row }; // NOTE(ryan): This is testing the upper left
+            float p[2] = { (float)col, (float)row }; // NOTE(mal): This is testing the upper left
                                                      // of a pixel, not its center (for some reason
                                                      // this looks better at the moment).
             float w0 = edge_function(vs[1].coordinates, vs[2].coordinates, p);
@@ -723,7 +723,7 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 EXPORT void game_update(GameMemory *memory, GameInput *input) {
     GameState *game_state = (GameState *)memory->storage;
 
-    // TODO(ryan): Local and world space (2D) have Y pointing up but screen space has Y pointing down.
+    // TODO(mal): Local and world space (2D) have Y pointing up but screen space has Y pointing down.
     // Need to include a transformation step that flips the direction of our Y axis!
 
     // Scale

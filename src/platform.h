@@ -2,18 +2,18 @@
 // 1. The platform layer which is compiled into an executable.
 // 2. The game dll which the platform executable loads dynamically.
 
-// TODO(ryan): should we do this or include guards?
+// TODO(mal): should we do this or include guards?
 #pragma once
 
-// TODO(ryan): maybe move common types and "#define"s into a separate file? Not sure if
+// TODO(mal): maybe move common types and "#define"s into a separate file? Not sure if
 // I'm going to do a unity build or not yet.
 #include <stdint.h>
 #include <stddef.h>
-// TODO(ryan): Instead of this, maybe make types b8, b16, b32, b64 etc.
+// TODO(mal): Instead of this, maybe make types b8, b16, b32, b64 etc.
 typedef enum { false, true } bool;
 
-// TODO(ryan): If not unity build, move into own file?
-// TODO(ryan): This assumes that we're running while hooked up to a debugger and can catch a crash.
+// TODO(mal): If not unity build, move into own file?
+// TODO(mal): This assumes that we're running while hooked up to a debugger and can catch a crash.
 // See GEA 3rd p126 for details on a perhaps more-proper assertion implementation. Probably want to
 // use the __FILE__ and __LINE__ macros to report when an assertion fails, then use some inline
 // assembly that will break to a debugger if one is attached.
@@ -30,9 +30,9 @@ typedef struct GameOffscreenBuffer {
     int bytes_per_pixel;
 } GameOffscreenBuffer;
 
-// NOTE(ryan): These codes are based on win32 virtual keycodes
-// TODO(ryan): add numpad keys?
-// TODO(ryan): add home, end, insert, page up/down, keys?
+// NOTE(mal): These codes are based on win32 virtual keycodes
+// TODO(mal): add numpad keys?
+// TODO(mal): add home, end, insert, page up/down, keys?
 typedef enum GameKey {
     // ARROWS
     // GAME_KEY_UP     = 0x26,
@@ -133,10 +133,10 @@ typedef enum GameKey {
 
 typedef struct GameInput {
     bool keys_down[256];
-    // TODO(ryan): mouse input
+    // TODO(mal): mouse input
 } GameInput;
 
-// TODO(ryan): maybe we should split this up into persistent (across frame boundaries) and scratch storage?
+// TODO(mal): maybe we should split this up into persistent (across frame boundaries) and scratch storage?
 typedef struct GameMemory {
     bool is_initialized;
     void *storage;
@@ -144,7 +144,7 @@ typedef struct GameMemory {
 } GameMemory;
 
 #if defined(_MSC_VER)
-    // TODO(ryan): document why we don't have to declare __declspec(dllexport/dllimport) when using MSVC
+    // TODO(mal): document why we don't have to declare __declspec(dllexport/dllimport) when using MSVC
     // (reminder: we're declaring -EXPORT:func_name to the linker in our build script)
     #define EXPORT
 #elif defined(__GNUC__)
@@ -166,7 +166,7 @@ typedef void (*GameRenderFunction) GAME_RENDER_PARAMS;
 void game_update GAME_UPDATE_PARAMS;
 typedef void (*GameUpdateFunction) GAME_UPDATE_PARAMS;
 
-// // NOTE(ryan): Just leaving the old way of doing this here in case I want to go back to it
+// // NOTE(mal): Just leaving the old way of doing this here in case I want to go back to it
 // #define GAME_UPDATE_AND_RENDER_SIGNATURE(func_name) void func_name(GameOffscreenBuffer *offscreen_buffer, GameInput *input, GameMemory *memory)
 // #define GAME_UPDATE_AND_RENDER_TYPE(type_name) GAME_UPDATE_AND_RENDER_SIGNATURE((*type_name))
 // typedef GAME_UPDATE_AND_RENDER_TYPE(GameUpdateAndRender);
