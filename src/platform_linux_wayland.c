@@ -550,13 +550,9 @@ void xdg_toplevel_configure(
 	}
 	munmap(state->shm_pool_data, state->shm_pool_size);
 
-	// FIXME(mal): We flicker here when resizing because we're destroying our old buffer and
-	// immediately attaching a new one without drawing to it! Solution: double buffering.
-	// Don't destroy the old buffer until AFTER we've drawn the new buffer. That means we need to
-	// draw our frame somewhere in this function.
 	state->width = width;
 	state->height = height;
-	state->stride = width * 4; // TODO(mal): Maybe store the bytes-per-pixel in state as well?
+	state->stride = width * state->bytes_per_pixel;
 	create_buffers(state);
 
 	GameOffscreenBuffer game_offscreen_buffer;
@@ -565,7 +561,7 @@ void xdg_toplevel_configure(
 	game_offscreen_buffer.height          = state->height;
 	game_offscreen_buffer.bytes_per_pixel = state->bytes_per_pixel;
 
-	// TODO(mal): Send to game to draw here
+	// FIXME(mal): Send to game to draw here
 
 	wl_surface_attach(state->wl_surface, state->wl_buffers[state->current_buffer_index], 0, 0);
 	wl_surface_commit(state->wl_surface);
@@ -621,7 +617,8 @@ const struct wl_registry_listener registry_listener = {
 };
 
 int main() {
-	#define NBUFFERS 1
+	#define NBUFFERS 1 // just single buffering at the moment
+
 	ClientState client_state     = { 0 };
 	client_state.xkb_context     = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	client_state.width           = 640;
@@ -745,7 +742,7 @@ int main() {
 			game_offscreen_buffer.height          = client_state.height;
 			game_offscreen_buffer.bytes_per_pixel = client_state.bytes_per_pixel;
 
-			// TODO(mal): Send to game to draw here
+			// FIXME(mal): Send to game to draw here
 
 			// Request a new callback
 			// IMPORTANT(mal): We have to request a surface frame BEFORE we commit the surface!

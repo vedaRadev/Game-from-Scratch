@@ -154,12 +154,19 @@ typedef struct GameMemory {
 	#pragma warning Unknown dynamic link import/export semantics
 #endif
 
-// TODO(ryan): not sure if I like this approach.
-// Here's what I was doing previously:
-//      EXPORT void update_and_render(/* args */)
-//      typedef void (*GameUpdateAndRender)(/* args */)
-// But that means that the prototype for update_and_render will be included in the platform layer,
-// which isn't what I wanted (didn't seem to cause issues with MSVC though, so maybe doesn't matter).
-#define GAME_UPDATE_AND_RENDER_SIGNATURE(func_name) void func_name(GameOffscreenBuffer *offscreen_buffer, GameInput *input, GameMemory *memory)
-#define GAME_UPDATE_AND_RENDER_TYPE(type_name) GAME_UPDATE_AND_RENDER_SIGNATURE((*type_name))
-typedef GAME_UPDATE_AND_RENDER_TYPE(GameUpdateAndRender);
+#define GAME_INIT_PARAMS (GameMemory *memory, int initial_width, int initial_height)
+void game_init GAME_INIT_PARAMS;
+typedef void (*GameInit) GAME_INIT_PARAMS;
+
+#define GAME_RENDER_PARAMS (GameMemory *memory, GameOffscreenBuffer *offscreen_buffer)
+void game_render GAME_RENDER_PARAMS;
+typedef void (*GameRender) GAME_RENDER_PARAMS;
+
+#define GAME_UPDATE_PARAMS (GameMemory *memory, GameInput *input)
+void game_update GAME_UPDATE_PARAMS;
+typedef void (*GameUpdate) GAME_UPDATE_PARAMS;
+
+// // NOTE(ryan): Just leaving the old way of doing this here in case I want to go back to it
+// #define GAME_UPDATE_AND_RENDER_SIGNATURE(func_name) void func_name(GameOffscreenBuffer *offscreen_buffer, GameInput *input, GameMemory *memory)
+// #define GAME_UPDATE_AND_RENDER_TYPE(type_name) GAME_UPDATE_AND_RENDER_SIGNATURE((*type_name))
+// typedef GAME_UPDATE_AND_RENDER_TYPE(GameUpdateAndRender);

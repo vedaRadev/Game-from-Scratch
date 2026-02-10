@@ -620,8 +620,10 @@ float edge_function(float v0[2], float v1[2], float p[2]) {
     return result;
 }
 
-EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
+EXPORT void game_init(GameMemory *memory, int initial_width, int initial_height) {
     GameState *game_state = (GameState *)memory->storage;
+	// NOTE(ryan): Can probably get rid of this check honestly since the platform layer should only
+	// be calling this function once
     if (!memory->is_initialized) {
         memory->is_initialized = true;
 
@@ -633,17 +635,17 @@ EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
         // base right
         game_state->triangle.vertices[2] = (Vertex){ .coordinates = { 1, -1 }, .color = 0x000000FF };
 
-        game_state->triangle.position[0] = offscreen_buffer->width / 2.0f;
-        game_state->triangle.position[1] = offscreen_buffer->height / 2.0f;
+        game_state->triangle.position[0] = initial_width / 2.0f;
+        game_state->triangle.position[1] = initial_height / 2.0f;
     }
+}
+
+EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffer) {
+    GameState *game_state = (GameState *)memory->storage;
 
     Vertex v0 = game_state->triangle.vertices[0], v1 = game_state->triangle.vertices[1], v2 = game_state->triangle.vertices[2];
-
-    // TODO(ryan): Local and world space (2D) have Y pointing up but screen space has Y pointing down.
-    // Need to include a transformation step that flips the direction of our Y axis!
-
-    // Scale
-    game_state->triangle.scale = 50.0f;
+	
+	// Scaling
     v0.coordinates[0] *= game_state->triangle.scale;
     v0.coordinates[1] *= game_state->triangle.scale;
     v1.coordinates[0] *= game_state->triangle.scale;
@@ -651,14 +653,8 @@ EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
     v2.coordinates[0] *= game_state->triangle.scale;
     v2.coordinates[1] *= game_state->triangle.scale;
 
-    // Rotate
-    const float rot_speed = 1.5f;
-    if (input->keys_down[GAME_KEY_J]) game_state->triangle.rotation += rot_speed;
-    if (input->keys_down[GAME_KEY_L]) game_state->triangle.rotation -= rot_speed;
-    if (game_state->triangle.rotation > 180.0f) game_state->triangle.rotation -= 360.0f;
-    if (game_state->triangle.rotation < 180.0f) game_state->triangle.rotation += 360.0f;
+	// Rotating
     float rot_rad = DEGREES_TO_RADIANS(game_state->triangle.rotation);
-
     float v0x = v0.coordinates[0], v0y = v0.coordinates[1];
     float v1x = v1.coordinates[0], v1y = v1.coordinates[1];
     float v2x = v2.coordinates[0], v2y = v2.coordinates[1];
@@ -669,13 +665,7 @@ EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
     v2.coordinates[0] = v2x * (float)cos(rot_rad) + v2y * -(float)sin(rot_rad);
     v2.coordinates[1] = v2x * (float)sin(rot_rad) + v2y *  (float)cos(rot_rad);
     
-    // Translate
-    const float move_speed = 2.5f;
-    if (input->keys_down[GAME_KEY_A]) game_state->triangle.position[0] -= move_speed;
-    if (input->keys_down[GAME_KEY_D]) game_state->triangle.position[0] += move_speed;
-    if (input->keys_down[GAME_KEY_W]) game_state->triangle.position[1] += move_speed;
-    if (input->keys_down[GAME_KEY_S]) game_state->triangle.position[1] -= move_speed;
-
+	// Translating
     v0.coordinates[0] += game_state->triangle.position[0];
     v0.coordinates[1] += game_state->triangle.position[1];
     v1.coordinates[0] += game_state->triangle.position[0];
@@ -728,4 +718,28 @@ EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
             }
         }
     }
+}
+
+EXPORT void game_update(GameMemory *memory, GameInput *input) {
+    GameState *game_state = (GameState *)memory->storage;
+
+    // TODO(ryan): Local and world space (2D) have Y pointing up but screen space has Y pointing down.
+    // Need to include a transformation step that flips the direction of our Y axis!
+
+    // Scale
+    game_state->triangle.scale = 50.0f;
+
+    // Rotate
+    const float rot_speed = 1.5f;
+    if (input->keys_down[GAME_KEY_J]) game_state->triangle.rotation += rot_speed;
+    if (input->keys_down[GAME_KEY_L]) game_state->triangle.rotation -= rot_speed;
+    if (game_state->triangle.rotation > 180.0f) game_state->triangle.rotation -= 360.0f;
+    if (game_state->triangle.rotation < 180.0f) game_state->triangle.rotation += 360.0f;
+
+    // Translate
+    const float move_speed = 2.5f;
+    if (input->keys_down[GAME_KEY_A]) game_state->triangle.position[0] -= move_speed;
+    if (input->keys_down[GAME_KEY_D]) game_state->triangle.position[0] += move_speed;
+    if (input->keys_down[GAME_KEY_W]) game_state->triangle.position[1] += move_speed;
+    if (input->keys_down[GAME_KEY_S]) game_state->triangle.position[1] -= move_speed;
 }
