@@ -677,6 +677,7 @@ int main() {
 	client_state.shm_pool_size   = client_state.height * client_state.stride * client_state.nbuffers;
 
 	client_state.wl_display = wl_display_connect(NULL);
+	assert(client_state.wl_display);
 	client_state.wl_display_fd = wl_display_get_fd(client_state.wl_display);
 	client_state.wl_registry = wl_display_get_registry(client_state.wl_display);
 	wl_registry_add_listener(client_state.wl_registry, &registry_listener, &client_state);
@@ -696,9 +697,13 @@ int main() {
 	// NOTE(mal): Depending on the desktop environment this may or may not be available!
 	// In a real application we should probably have a fallback for drawing our own decorations
 	// (borders, interactive buttons for close/maximize/minimize/etc)
-	client_state.xdg_toplevel_decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
-		client_state.xdg_decoration_manager, client_state.xdg_toplevel
-	);
+	if (client_state.xdg_decoration_manager) {
+		// TODO(mal): Log a warning that decoration manager isn't supported or that we didn't
+		// bind to it for some reason
+		client_state.xdg_toplevel_decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
+			client_state.xdg_decoration_manager, client_state.xdg_toplevel
+		);
+	}
 	// TODO(mal): Is there a way to tell the compositor what buttons and stuff we want?
 	// TODO(mal): Configure listener for decoration configure event so we can ack it.
 
