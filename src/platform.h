@@ -18,9 +18,28 @@ typedef enum { false, true } bool;
 // use the __FILE__ and __LINE__ macros to report when an assertion fails, then use some inline
 // assembly that will break to a debugger if one is attached.
 #ifdef ASSERTIONS_ENABLED
-    #define assert(expr) if (!(expr)) { *(volatile int *)0; }
+	#define __CRASH_PROGRAM *(volatile char *)0;
+	#define ASSERT_MSG(expr, msg)\
+		if (!(expr)) {\
+			char *out = msg ? msg : #expr;\
+			fprintf(stderr, "Assertion failed (%s +%d): %s\n", __FILE__, __LINE__, out);\
+			fflush(stderr);\
+			__CRASH_PROGRAM;\
+		}
+	#define ASSERT(expr) ASSERT_MSG(expr, NULL)
+	#define ASSERT_MSG_FMT(expr, msg_fmt, ...)\
+		if (!(expr)) {\
+			char full_fmt[128] = "Assertion failed (%s +%d): ";\
+			strncat(full_fmt, msg_fmt, 128 - strlen(full_fmt));\
+			fprintf(stderr, full_fmt, __FILE__, __LINE__, __VA_ARGS__);\
+			fflush(stderr);\
+			__CRASH_PROGRAM;\
+		}
 #else
-    #define assert(expr)
+	#define __CRASH_PROGRAM
+	#define ASSERT_MSG(expr, msg)
+	#define ASSERT(expr)
+	#define ASSERT_MSG_FMT(expr, msg_fmt, ...)
 #endif
 
 typedef struct GameOffscreenBuffer {

@@ -727,7 +727,7 @@ EXPORT void game_update(GameMemory *memory, GameInput *input) {
     // Need to include a transformation step that flips the direction of our Y axis!
 
     // Scale
-    game_state->triangle.scale = 50.0f;
+    game_state->triangle.scale = 100.0f;
 
     // Rotate
     const float rot_speed = 1.5f;

@@ -2,8 +2,6 @@
 // - Get current path to exe then construct path to the shared game lib, use that when loading game code!
 //   At the moment CWD must be set to the build dir.
 //
-// - Implement hot reloading.
-//
 // - Grab keyboard input and send to game update.
 //   Probably will have to map keys to fit the windows keycodes.
 //
@@ -26,6 +24,7 @@
 #include <sys/timerfd.h>
 #include <sys/poll.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <dlfcn.h>
@@ -402,10 +401,10 @@ const struct wl_pointer_listener wl_pointer_listener = {
 void wl_keyboard_keymap(void *data, struct wl_keyboard *wl_keyboard, uint32_t format, int32_t fd, uint32_t size) {
 	ClientState *client_state = data;
 	// Ensure we got our expected format
-	assert(format == WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1);
+	ASSERT(format == WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1);
 	// Mapping the memory pointed to by the file descriptor into our addr space
 	char *map_shm = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
-	assert(map_shm != MAP_FAILED);
+	ASSERT(map_shm != MAP_FAILED);
 
 	struct xkb_keymap *xkb_keymap = xkb_keymap_new_from_string(
 		client_state->xkb_context, map_shm,
@@ -637,6 +636,7 @@ const struct wl_registry_listener registry_listener = {
 
 typedef struct GameCode {
 	void *lib_handle;
+	__time_t last_modified_time;
 	GameInitFunction game_init;
 	GameRenderFunction game_render;
 	GameUpdateFunction game_update;
@@ -647,18 +647,23 @@ GameCode load_game_code() {
 	GameCode game_code = {0};
 
 	game_code.lib_handle = dlopen("./game.so", RTLD_NOW);
-	char *err = dlerror();
-	// TODO(mal): print error with dlerror probably (maybe pull in my nice little assert methods
-	// I've written in other places. They use printf though but whatever)
-	assert(game_code.lib_handle);
+	ASSERT_MSG_FMT(game_code.lib_handle, "Failed to open game lib: %s\n", dlerror());
 
 	game_code.game_init   = dlsym(game_code.lib_handle, "game_init");
 	game_code.game_update = dlsym(game_code.lib_handle, "game_update");
 	game_code.game_render = dlsym(game_code.lib_handle, "game_render");
 
-	assert(game_code.game_init);
-	assert(game_code.game_update);
-	assert(game_code.game_render);
+	ASSERT(game_code.game_init);
+	ASSERT(game_code.game_update);
+	ASSERT(game_code.game_render);
+
+	// NOTE(mal): Yes, technically if we're entering this function from our main loop we've probably
+	// just statted the file. However, this reloading should happen so infrequently and is fast
+	// enough as is that it shouldn't matter that we're statting again (and honestly all that info
+	// is probably cached anyway by the OS idk I haven't checked).
+	struct stat game_so_stat;
+	stat("./game.so", &game_so_stat);
+	game_code.last_modified_time = game_so_stat.st_mtime;
 
 	return game_code;
 }
@@ -677,7 +682,7 @@ int main() {
 	client_state.shm_pool_size   = client_state.height * client_state.stride * client_state.nbuffers;
 
 	client_state.wl_display = wl_display_connect(NULL);
-	assert(client_state.wl_display);
+	ASSERT(client_state.wl_display);
 	client_state.wl_display_fd = wl_display_get_fd(client_state.wl_display);
 	client_state.wl_registry = wl_display_get_registry(client_state.wl_display);
 	wl_registry_add_listener(client_state.wl_registry, &registry_listener, &client_state);
@@ -697,13 +702,10 @@ int main() {
 	// NOTE(mal): Depending on the desktop environment this may or may not be available!
 	// In a real application we should probably have a fallback for drawing our own decorations
 	// (borders, interactive buttons for close/maximize/minimize/etc)
-	if (client_state.xdg_decoration_manager) {
-		// TODO(mal): Log a warning that decoration manager isn't supported or that we didn't
-		// bind to it for some reason
-		client_state.xdg_toplevel_decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
-			client_state.xdg_decoration_manager, client_state.xdg_toplevel
-		);
-	}
+	ASSERT(client_state.xdg_decoration_manager);
+	client_state.xdg_toplevel_decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
+		client_state.xdg_decoration_manager, client_state.xdg_toplevel
+	);
 	// TODO(mal): Is there a way to tell the compositor what buttons and stuff we want?
 	// TODO(mal): Configure listener for decoration configure event so we can ack it.
 
@@ -754,6 +756,17 @@ int main() {
 	while (1) {
 		int needs_draw = 0;
 
+		struct stat game_so_stat;
+		// TODO(mal): Construct and use abs path! Right now this means our CWD _must_ be in the same
+		// dir as both the platform exe and the game shared lib.
+		stat("./game.so", &game_so_stat);
+		// TODO(mal): Check access with R_OK | X_OK instead of just F_OK?
+		// NOTE(mal): Hot-reloading gotcha! https://stackoverflow.com/questions/56334288/how-to-hot-reload-shared-library-on-linux
+		if (game_so_stat.st_mtime > game_code.last_modified_time && access("./game.lock", F_OK) != 0) {
+			ASSERT(dlclose(game_code.lib_handle) == 0);
+			game_code = load_game_code();
+		}
+
 		// 0 on success, -1 if queue was not empty
 		while (wl_display_prepare_read(client_state.wl_display) != 0) {
 			// While queue is not empty, dispatch all pending events
@@ -774,7 +787,7 @@ int main() {
 
 		// Okay now that we've handled all pending events we can sleep
 		int num_fds_with_events = poll(pollfds, num_pollfds, -1);
-		assert(num_fds_with_events != -1);
+		ASSERT(num_fds_with_events != -1);
 
 		if (pollfds[WAYLAND_DISPLAY_POLL].revents & POLLIN) {
 			// Dispatch events to obtain:

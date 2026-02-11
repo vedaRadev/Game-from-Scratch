@@ -29,13 +29,30 @@ build_game() {
 	# wayland_client = core wayland functions
 	# xkbcommon      = keyboard stuff
 
-	echo "creating game dll lock file"
+	# TODO(mal): Move this note about hot reloading into the readme?
+	# NOTE(mal): We create a dummy game.lock file here before compiling/linking
+	# then delete it when we're done. In our actual platform layers for hot
+	# reloading we perform the following:
+	#
+	# 1. Stat our game library.
+	# 2. If the modified time is greater than our stored modified time obtained
+	#    from the last load...
+	# 3. Check if the game.lock exists. If not, then...
+	# 4. Unload the game shared library.
+	# 5. Load the updated game shared library.
+	# 6. Store the updated last modified time.
+	# 
+	# Because the shared library's last modified time is updated before the
+	# linker is actually done doing its thing and closes the file, without this
+	# game.lock we could attempt to open a partially-written (i.e. corrupted)
+	# shared library.
+	echo "creating game lib lock file"
 	echo "game build in progress" > game.lock
 	gcc -shared "$SRC_DIR"/game.c -o game.so \
 		-lm \
 		$COMMON_COMPILER_FLAGS $COMMON_LINKER_FLAGS
 	rm game.lock
-	echo "game dll lock file deleted"
+	echo "game lib lock file deleted"
 
 	gcc "$SRC_DIR"/platform_linux_wayland.c "$SRC_DIR"/xdg_shell_protocol.c "$SRC_DIR"/xdg_decoration_protocol.c \
 		-o platform_linux_wayland \
