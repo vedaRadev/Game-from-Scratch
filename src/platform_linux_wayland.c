@@ -566,7 +566,6 @@ GameKey xkb_keysym_to_game_key(xkb_keysym_t keysym) {
 		case XKB_KEY_Control_R: result = GAME_KEY_CTRL_R; break;
 		case XKB_KEY_Return   : result = GAME_KEY_ENTER; break;
 	}
-	ASSERT(result != GAME_KEY_UNKNOWN);
 	return result;
 }
 
@@ -588,9 +587,11 @@ void wl_keyboard_key(
 	// TODO(mal): Maybe add support for position-oriented (e.g. raw scan codes) input instead of layout-oriented (keysyms)
 	xkb_keysym_t sym = xkb_state_key_get_one_sym(client_state->xkb_state, keycode);
 	GameKey game_key = xkb_keysym_to_game_key(sym);
-	// TODO(mal): Change to b8 or something (bool8_t?) once I add those
-	bool is_down = state == WL_KEYBOARD_KEY_STATE_PRESSED || state == WL_KEYBOARD_KEY_STATE_REPEATED;
-	client_state->game_input->keys_down[game_key] = is_down;
+	if (game_key != GAME_KEY_UNKNOWN) {
+		// TODO(mal): Change to b8 or something (bool8_t?) once I add those
+		bool is_down = state == WL_KEYBOARD_KEY_STATE_PRESSED || state == WL_KEYBOARD_KEY_STATE_REPEATED;
+		client_state->game_input->keys_down[game_key] = is_down;
+	}
 }
 
 // When we lose keyboard focus
