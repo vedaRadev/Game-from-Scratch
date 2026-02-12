@@ -10,6 +10,7 @@
 //   Though how often will a user e.g. be resizing the window and be like "damn I wish the screen
 //   didn't flicker while doing this :("?
 
+#include <xkbcommon/xkbcommon-keysyms.h>
 #define _POSIX_C_SOURCE 200112L
 
 #include "platform.h"
@@ -17,6 +18,7 @@
 // Wayland stuff
 #include <wayland-client.h>
 #include <xkbcommon/xkbcommon.h> // keyboard maps and whatnot
+#include <xkbcommon/xkbcommon-keysyms.h>
 #include "xdg_shell_client_protocol.h"
 #include "xdg_decoration_client_protocol.h" // server-side decoration
 
@@ -82,6 +84,10 @@ typedef struct ClientState {
 	/* State */ struct xkb_state *xkb_state;
 	struct xkb_context *xkb_context;
 	struct xkb_keymap *xkb_keymap;
+	// NOTE(mal): At the moment we just need GameInput in here to be able to grab keyboard events.
+	// TODO(mal): Maybe in the future if GameInput has a bunch of stuff, we could just have a
+	// separate struct for xkb-keys and translate that into game input keys in a separate step.
+	GameInput *game_input;
 	char *shm_pool_data;
 	int wl_display_fd;
 	uint32_t last_render_ms;
@@ -448,6 +454,122 @@ void wl_keyboard_enter(
 	*/
 }
 
+GameKey xkb_keysym_to_game_key(xkb_keysym_t keysym) {
+	GameKey result = GAME_KEY_UNKNOWN;
+	switch (keysym) {
+		// ARROWS
+		case XKB_KEY_Left : result = GAME_KEY_LEFT; break;
+		case XKB_KEY_Up   : result = GAME_KEY_RIGHT; break;
+		case XKB_KEY_Right: result = GAME_KEY_RIGHT; break;
+		case XKB_KEY_Down : result = GAME_KEY_DOWN; break;
+		// NUMERIC
+		case XKB_KEY_0: result = GAME_KEY_0; break;
+		case XKB_KEY_1: result = GAME_KEY_1; break;
+		case XKB_KEY_2: result = GAME_KEY_2; break;
+		case XKB_KEY_3: result = GAME_KEY_3; break;
+		case XKB_KEY_4: result = GAME_KEY_4; break;
+		case XKB_KEY_5: result = GAME_KEY_5; break;
+		case XKB_KEY_6: result = GAME_KEY_6; break;
+		case XKB_KEY_7: result = GAME_KEY_7; break;
+		case XKB_KEY_8: result = GAME_KEY_8; break;
+		case XKB_KEY_9: result = GAME_KEY_9; break;
+
+		// ALPHABETIC
+		case XKB_KEY_a:
+		case XKB_KEY_A: result = GAME_KEY_A; break;
+		case XKB_KEY_b:
+		case XKB_KEY_B: result = GAME_KEY_B; break;
+		case XKB_KEY_c:
+		case XKB_KEY_C: result = GAME_KEY_C; break;
+		case XKB_KEY_d:
+		case XKB_KEY_D: result = GAME_KEY_D; break;
+		case XKB_KEY_e:
+		case XKB_KEY_E: result = GAME_KEY_E; break;
+		case XKB_KEY_f:
+		case XKB_KEY_F: result = GAME_KEY_F; break;
+		case XKB_KEY_g:
+		case XKB_KEY_G: result = GAME_KEY_G; break;
+		case XKB_KEY_h:
+		case XKB_KEY_H: result = GAME_KEY_H; break;
+		case XKB_KEY_i:
+		case XKB_KEY_I: result = GAME_KEY_I; break;
+		case XKB_KEY_j:
+		case XKB_KEY_J: result = GAME_KEY_J; break;
+		case XKB_KEY_k:
+		case XKB_KEY_K: result = GAME_KEY_K; break;
+		case XKB_KEY_l:
+		case XKB_KEY_L: result = GAME_KEY_L; break;
+		case XKB_KEY_m:
+		case XKB_KEY_M: result = GAME_KEY_M; break;
+		case XKB_KEY_n:
+		case XKB_KEY_N: result = GAME_KEY_N; break;
+		case XKB_KEY_o:
+		case XKB_KEY_O: result = GAME_KEY_O; break;
+		case XKB_KEY_p:
+		case XKB_KEY_P: result = GAME_KEY_P; break;
+		case XKB_KEY_q:
+		case XKB_KEY_Q: result = GAME_KEY_Q; break;
+		case XKB_KEY_r:
+		case XKB_KEY_R: result = GAME_KEY_R; break;
+		case XKB_KEY_s:
+		case XKB_KEY_S: result = GAME_KEY_S; break;
+		case XKB_KEY_t:
+		case XKB_KEY_T: result = GAME_KEY_T; break;
+		case XKB_KEY_u:
+		case XKB_KEY_U: result = GAME_KEY_U; break;
+		case XKB_KEY_v:
+		case XKB_KEY_V: result = GAME_KEY_V; break;
+		case XKB_KEY_w:
+		case XKB_KEY_W: result = GAME_KEY_W; break;
+		case XKB_KEY_x:
+		case XKB_KEY_X: result = GAME_KEY_X; break;
+		case XKB_KEY_y:
+		case XKB_KEY_Y: result = GAME_KEY_Y; break;
+		case XKB_KEY_z:
+		case XKB_KEY_Z: result = GAME_KEY_Z; break;
+		// PUNCTUATION
+		case XKB_KEY_Tab         : result = GAME_KEY_TAB; break;
+		case XKB_KEY_space       : result = GAME_KEY_SPACE; break;
+		case XKB_KEY_equal       : result = GAME_KEY_EQUAL; break;
+		case XKB_KEY_comma       : result = GAME_KEY_COMMA; break;
+		case XKB_KEY_minus       : result = GAME_KEY_MINUS; break;
+		case XKB_KEY_period      : result = GAME_KEY_PERIOD; break;
+		case XKB_KEY_slash       : result = GAME_KEY_FORWARD_SLASH; break;
+		case XKB_KEY_grave       : result = GAME_KEY_GRAVE; break;
+		case XKB_KEY_bracketleft : result = GAME_KEY_BRACKET_L; break;
+		case XKB_KEY_backslash   : result = GAME_KEY_BACKSLASH; break;
+		case XKB_KEY_bracketright: result = GAME_KEY_BRACKET_R; break;
+		case XKB_KEY_apostrophe  : result = GAME_KEY_QUOTE; break;
+		// FUNCTION
+		case XKB_KEY_F1 : result = GAME_KEY_F1; break;
+		case XKB_KEY_F2 : result = GAME_KEY_F2; break;
+		case XKB_KEY_F3 : result = GAME_KEY_F3; break;
+		case XKB_KEY_F4 : result = GAME_KEY_F4; break;
+		case XKB_KEY_F5 : result = GAME_KEY_F5; break;
+		case XKB_KEY_F6 : result = GAME_KEY_F6; break;
+		case XKB_KEY_F7 : result = GAME_KEY_F7; break;
+		case XKB_KEY_F8 : result = GAME_KEY_F8; break;
+		case XKB_KEY_F9 : result = GAME_KEY_F9; break;
+		case XKB_KEY_F10: result = GAME_KEY_F10; break;
+		case XKB_KEY_F11: result = GAME_KEY_F11; break;
+		case XKB_KEY_F12: result = GAME_KEY_F12; break;
+		// MISC
+		case XKB_KEY_Escape   : result = GAME_KEY_ESCAPE; break;
+		case XKB_KEY_BackSpace: result = GAME_KEY_BACKSPACE; break;
+		case XKB_KEY_Delete   : result = GAME_KEY_DELETE; break;
+		case XKB_KEY_Caps_Lock: result = GAME_KEY_CAPS; break;
+		case XKB_KEY_Shift_L  : result = GAME_KEY_SHIFT_L; break;
+		case XKB_KEY_Shift_R  : result = GAME_KEY_SHIFT_R; break;
+		case XKB_KEY_Alt_L    : result = GAME_KEY_ALT_L; break;
+		case XKB_KEY_Alt_R    : result = GAME_KEY_ALT_R; break;
+		case XKB_KEY_Control_L: result = GAME_KEY_CTRL_L; break;
+		case XKB_KEY_Control_R: result = GAME_KEY_CTRL_R; break;
+		case XKB_KEY_Return   : result = GAME_KEY_ENTER; break;
+	}
+	ASSERT(result != GAME_KEY_UNKNOWN);
+	return result;
+}
+
 void wl_keyboard_key(
 	void *data,
 	struct wl_keyboard *wl_keyboard,
@@ -457,20 +579,18 @@ void wl_keyboard_key(
 	uint32_t state
 )
 {
-	/*
+	// Note about XKB keycodes: https://gist.github.com/axelkar/dbdbfe7e61baf52c8b0cf1be423a14c1
+
 	ClientState *client_state = data;
-	char buf[128];
-	// Remember that the scancode sent from this event is the Linux
-	// evdev scancode. To translate to an XKB scancode you have to
-	// add 8 to the evdev scancode.
+	// Remember that the scancode sent from this event is the Linux evdev scancode. To translate to
+	// an XKB scancode you have to add 8 to the evdev scancode.
 	uint32_t keycode = key + 8;
+	// TODO(mal): Maybe add support for position-oriented (e.g. raw scan codes) input instead of layout-oriented (keysyms)
 	xkb_keysym_t sym = xkb_state_key_get_one_sym(client_state->xkb_state, keycode);
-	xkb_keysym_get_name(sym, buf, sizeof(buf));
-	const char *action = state == WL_KEYBOARD_KEY_STATE_PRESSED ? "press" : "release";
-	printf("key %s\t: sym: %-12s (%d), ", action, buf, sym);
-	xkb_state_key_get_utf8(client_state->xkb_state, keycode, buf, sizeof(buf));
-	printf("utf8: '%s'\n", buf);
-	*/
+	GameKey game_key = xkb_keysym_to_game_key(sym);
+	// TODO(mal): Change to b8 or something (bool8_t?) once I add those
+	bool is_down = state == WL_KEYBOARD_KEY_STATE_PRESSED || state == WL_KEYBOARD_KEY_STATE_REPEATED;
+	client_state->game_input->keys_down[game_key] = is_down;
 }
 
 // When we lose keyboard focus
@@ -741,6 +861,11 @@ int main() {
 	game_memory.storage = mmap(NULL, game_memory.storage_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
 	GameInput game_input = {0};
+	// NOTE(mal): Going to send the game input through our wayland listeners to collect keyboard input.
+	// TODO(mal): If what I'm trying to do doesn't work, maybe have to instead use two fields for
+	// client_state: input_this_frame and input_last_frame. Then we'd be able to properly check if a
+	// button was previously down and only update input on key transitions.
+	client_state.game_input = &game_input;
 
 	game_code.game_init(&game_memory, client_state.width, client_state.height);
 
