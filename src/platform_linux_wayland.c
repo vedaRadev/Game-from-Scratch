@@ -1,10 +1,4 @@
 // FIXME's and TODO's
-// - Get current path to exe then construct path to the shared game lib, use that when loading game code!
-//   At the moment CWD must be set to the build dir.
-//
-// - Grab keyboard input and send to game update.
-//   Probably will have to map keys to fit the windows keycodes.
-//
 // - Need to put our game code and memory into the state that we're passing around to our wayland callbacks.
 //   Then we'll be able to re-render immediately in response to toplevel/surface config events.
 //   Though how often will a user e.g. be resizing the window and be like "damn I wish the screen
@@ -30,6 +24,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <dlfcn.h>
+#include <linux/limits.h>
 
 #include <stdio.h>
 #include <stdint.h>
@@ -790,6 +785,22 @@ GameCode load_game_code() {
 }
 
 int main() {
+	char exe_path[PATH_MAX];
+	ssize_t exe_path_len = 0;
+	ASSERT_MSG(
+		(exe_path_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1)) > 0,
+		"Failed to get path of executable"
+	);
+	exe_path[exe_path_len] = '\0';
+	size_t exe_dir_path_len = exe_path_len;
+	while (exe_path[exe_dir_path_len - 1] != '/') {
+		exe_dir_path_len--;
+	}
+	char exe_dir_path[PATH_MAX];
+	exe_dir_path[exe_dir_path_len] = '\0';
+	strncpy(exe_dir_path, exe_path, exe_dir_path_len);
+	ASSERT(chdir(exe_dir_path) == 0);
+
 	#define NBUFFERS 1 // just single buffering at the moment
 
 	ClientState client_state     = { 0 };
