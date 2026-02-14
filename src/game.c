@@ -1,5 +1,32 @@
+// NOTE(mal) ON 3D COORDINATE SYSTEM:
+// World space: RHS +X Right, +Y Up, +Z Forward
+// OGL-style camera space and projection matrix
+
+// FIXME's and TODO's
+//
+// Start using 4x4 matrices for all transforms instead of having separate 3x3
+// rotations and vec3 translations.
+//
+// Review "Essential Math" 4.3.6 about application of affine transformations.
+// Actually, need to review what the definition of an affine transformation is.
+//
+// Pretty sure the 3D triangle projection stuff is working probably and I just
+// don't have the camera set up to actually look at the triangle.
+//
+// Perspective-correct vertex attribute interpolation!
+//
+// Review the logic behind setting up perspective and ndc-to-screen matrices so
+// that I can do it for any arbitrary coordinate system.
+//
+// Maybe introduce the following convention for all my math functions:
+// - In-place modifications follow naming convention e.g.: vec3_normalized
+// - Functions that do NOT modify in-pace follow convetion: vec3_to_normalized
+// Example:
+// void vec3_normalized(Vec3 *v) { /* ... */ } // in-place modification
+// Vec3 vec3_to_normalized(const Vec3 *v) { /* ... */ } // no modification
+
 #include <stdint.h>
-#include <math.h> // TODO(mal): remove this eventually, NO STANDARD LIBRARY
+#include <math.h>
 #include "platform.h"
 // NOTE(mal): Only on Linux, probably wrap this in a #if (something)
 #include <stdlib.h> // for abs at the moment
@@ -18,14 +45,17 @@ inline float degrees_to_radians(float degrees) {
 // TODO(mal): Some of the Mat4x4 and Mat3x3 ops are very similar in implementation. Is there a way
 // to semantically compress that code?
 
+typedef struct Vec2 {
+	union {
+		float elements[2];
+		struct { float x; float y; };
+	};
+} Vec2;
+
 typedef struct Vec3 {
 	union {
 		float elements[3];
-		struct {
-			float x;
-			float y;
-			float z;
-		};
+		struct { float x; float y; float z; };
 	};
 } Vec3;
 
@@ -69,6 +99,21 @@ Vec3 vec3_cross(Vec3 a, Vec3 b) {
 	result.x = a.y * b.z - a.z * b.y;
 	result.y = a.z * b.x - a.x * b.z;
 	result.z = a.x * b.y - a.y * b.x;
+	return result;
+}
+
+void vec3_normalize(Vec3 *v) {
+	float magnitude = sqrt((v->x * v->x) + (v->y * v->y) + (v->z * v->z));
+	v->x /= magnitude;
+	v->y /= magnitude;
+	v->z /= magnitude;
+}
+
+Vec3 mult_vec3_scalar(Vec3 v, float s) {
+	Vec3 result = {};
+	result.x = v.x * s;
+	result.y = v.y * s;
+	result.z = v.z * s;
 	return result;
 }
 
@@ -264,6 +309,35 @@ Mat4x4 mult_mat4x4_mat4x4(Mat4x4 a, Mat4x4 b) {
 	return result;
 }
 
+// https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/lookat-function/framing-lookat-function.html
+// WARN(mal): Have not tested this yet. May or may not work with the way I have my world axes set
+// up. Not sure yet.
+Mat3x3 look_at(Vec3 from, Vec3 to, Vec3 up) {
+	Vec3 forward = vec3_sub(from, to);
+	vec3_normalize(&forward);
+	Vec3 right = vec3_cross(up, forward);
+	vec3_normalize(&right);
+	up = vec3_cross(forward, right);
+
+	Mat3x3 result = {
+		.rows = {
+			[0][0] = right.x,
+			[0][1] = right.y,
+			[0][2] = right.z,
+
+			[1][0] = up.x,
+			[1][1] = up.y,
+			[1][2] = up.z,
+
+			[2][0] = forward.x,
+			[2][1] = forward.y,
+			[2][2] = forward.z,
+		}
+	};
+
+	return result;
+}
+
 typedef struct Point { int x; int y; } Point;
 size_t bresenham(Point *points, size_t points_len, int x0, int y0, int x1, int y1) {
 	int dx = abs(x1 - x0);
@@ -302,7 +376,7 @@ size_t bresenham(Point *points, size_t points_len, int x0, int y0, int x1, int y
 /*
    typedef struct GameState {
    Vec3 camera_world_position;
-   Mat3x3 camera_world_rotation;
+   Mat3x3 camera_world_orientation;
    Mat4x4 perspective;
    Mat4x4 ndc_to_screen;
    } GameState;
@@ -429,7 +503,7 @@ EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
 		game_state->camera_world_position.x = 0.0f;
 		game_state->camera_world_position.y = 0.0f;
 		game_state->camera_world_position.z = 0.0f;
-		game_state->camera_world_rotation = mat3x3_create_identity();
+		game_state->camera_world_orientation = mat3x3_create_identity();
 
 		{
 			float aspect_ratio = (float)offscreen_buffer->width / (float)offscreen_buffer->height;
@@ -511,16 +585,16 @@ EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
 
 	Mat3x3 rot_x = mat3x3_create_rotation_x(degrees_to_radians(camera_pitch));
 	Mat3x3 rot_y = mat3x3_create_rotation_y(degrees_to_radians(camera_yaw));
-	game_state->camera_world_rotation = mult_mat3x3_mat3x3(game_state->camera_world_rotation, mult_mat3x3_mat3x3(rot_y, rot_x));
-	game_state->camera_world_position = vec3_add(game_state->camera_world_position, mult_mat3x3_vec3(game_state->camera_world_rotation, camera_local_motion));
+	game_state->camera_world_orientation = mult_mat3x3_mat3x3(game_state->camera_world_orientation, mult_mat3x3_mat3x3(rot_y, rot_x));
+	game_state->camera_world_position = vec3_add(game_state->camera_world_position, mult_mat3x3_vec3(game_state->camera_world_orientation, camera_local_motion));
 
-	Mat3x3 camera_world_rotation_transpose = mat3x3_transpose(game_state->camera_world_rotation);
-	Vec3 camera_translation_inverse = vec3_negate(mult_mat3x3_vec3(camera_world_rotation_transpose, game_state->camera_world_position));
+	Mat3x3 camera_world_orientation_transpose = mat3x3_transpose(game_state->camera_world_orientation);
+	Vec3 camera_translation_inverse = vec3_negate(mult_mat3x3_vec3(camera_world_orientation_transpose, game_state->camera_world_position));
 	Mat4x4 world_to_view = {};
 	// Copy inverse camera rotation to upper 3x3
 	for (int r = 0; r < 3; r++) {
 		for (int c = 0; c < 3; c++) {
-			world_to_view.rows[r][c] = camera_world_rotation_transpose.rows[r][c];
+			world_to_view.rows[r][c] = camera_world_orientation_transpose.rows[r][c];
 		}
 	}
 	// Set inverse camera translation
@@ -590,19 +664,22 @@ EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
 */
 
 typedef struct Vertex {
-	float coordinates[2]; // x, y
-	uint32_t color;       // argb
+	Vec3 position;
+	uint32_t color; // argb
 } Vertex;
 
-typedef struct Triangle {
-	Vertex vertices[3]; // in local space
-	float position[2];  // (x, y) in world space
-	float rotation;     // degrees in world space
-	float scale;
-} Triangle;
+typedef struct Triangle3D {
+	Vertex local_vertices[3]; // in local space
+	Vec3   world_position;    // (x, y, z) in world space
+ 	Mat3x3 world_orientation; // degrees in world space
+	float  scale;
+} Triangle3D;
 
 typedef struct GameState {
-	Triangle triangle;
+	Triangle3D triangle;
+	float triangle_y_rotation_degrees;
+	Vec3 camera_world_position;
+	Mat3x3 camera_world_orientation; // euler angles
 } GameState;
 
 // v0 - first vertex, v1 - second vertex, p - test point
@@ -615,8 +692,14 @@ typedef struct GameState {
 // The value returned by this function is the same as the 2D "cross product" of
 // vectors (p - v0) and (v1 - v0) and the determinant of the 2D matrix formed by
 // the same two vectors.
-float edge_function(float v0[2], float v1[2], float p[2]) {
-	float result = (p[0] - v0[0]) * (v1[1] - v0[1]) - (p[1] - v0[1]) * (v1[0] - v0[0]);
+
+// float edge_function(Vec2 v0, Vec2 v1, Vec2 p) {
+// 	float result = (p.x - v0.x) * (v1.y - v0.y) - (p.y - v0.y) * (v1.x - v0.x);
+// 	return result;
+// }
+
+float edge_function(Vec3 v0, Vec3 v1, Vec3 p) {
+	float result = (p.x - v0.x) * (v1.y - v0.y) - (p.y - v0.y) * (v1.x - v0.x);
 	return result;
 }
 
@@ -629,61 +712,165 @@ EXPORT void game_init(GameMemory *memory, int initial_width, int initial_height)
 
 		// Defining triangle vertices in local space, in clockwise winding order
 		// base left
-		game_state->triangle.vertices[0] = (Vertex){ .coordinates = { -1, -1 }, .color = 0x00FF0000 };
+		game_state->triangle.local_vertices[0] = (Vertex){ .position = { .x = -1, .y = -1 }, .color = 0x00FF0000 };
 		// top
-		game_state->triangle.vertices[1] = (Vertex){ .coordinates = { 0, 1 }, .color = 0x0000FF00 };
+		game_state->triangle.local_vertices[1] = (Vertex){ .position = { .x = 0, .y = 1 }, .color = 0x0000FF00 };
 		// base right
-		game_state->triangle.vertices[2] = (Vertex){ .coordinates = { 1, -1 }, .color = 0x000000FF };
+		game_state->triangle.local_vertices[2] = (Vertex){ .position = { .x = 1, .y = -1 }, .color = 0x000000FF };
 
-		game_state->triangle.position[0] = initial_width / 2.0f;
-		game_state->triangle.position[1] = initial_height / 2.0f;
+		game_state->triangle.world_position = (Vec3){ .x = 0.0f, .y = 0.0f, .z = 5.0f };
+		game_state->triangle.scale = 75.0f;
+
+		game_state->camera_world_position = (Vec3){0};
+		game_state->camera_world_orientation = (Mat3x3){0};
 	}
 }
 
 EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffer) {
 	GameState *game_state = (GameState *)memory->storage;
 
-	Vertex v0 = game_state->triangle.vertices[0], v1 = game_state->triangle.vertices[1], v2 = game_state->triangle.vertices[2];
+	Vertex v0 = game_state->triangle.local_vertices[0];
+	Vertex v1 = game_state->triangle.local_vertices[1];
+	Vertex v2 = game_state->triangle.local_vertices[2];
 
 	// Scaling
-	v0.coordinates[0] *= game_state->triangle.scale;
-	v0.coordinates[1] *= game_state->triangle.scale;
-	v1.coordinates[0] *= game_state->triangle.scale;
-	v1.coordinates[1] *= game_state->triangle.scale;
-	v2.coordinates[0] *= game_state->triangle.scale;
-	v2.coordinates[1] *= game_state->triangle.scale;
-
+	v0.position = mult_vec3_scalar(v0.position, game_state->triangle.scale);
+	v1.position = mult_vec3_scalar(v1.position, game_state->triangle.scale);
+	v2.position = mult_vec3_scalar(v2.position, game_state->triangle.scale);
 	// Rotating
-	float rot_rad = DEGREES_TO_RADIANS(game_state->triangle.rotation);
-	float v0x = v0.coordinates[0], v0y = v0.coordinates[1];
-	float v1x = v1.coordinates[0], v1y = v1.coordinates[1];
-	float v2x = v2.coordinates[0], v2y = v2.coordinates[1];
-	v0.coordinates[0] = v0x * (float)cos(rot_rad) + v0y * -(float)sin(rot_rad);
-	v0.coordinates[1] = v0x * (float)sin(rot_rad) + v0y *  (float)cos(rot_rad);
-	v1.coordinates[0] = v1x * (float)cos(rot_rad) + v1y * -(float)sin(rot_rad);
-	v1.coordinates[1] = v1x * (float)sin(rot_rad) + v1y *  (float)cos(rot_rad);
-	v2.coordinates[0] = v2x * (float)cos(rot_rad) + v2y * -(float)sin(rot_rad);
-	v2.coordinates[1] = v2x * (float)sin(rot_rad) + v2y *  (float)cos(rot_rad);
-
+	Mat3x3 triangle_y_rot = mat3x3_create_rotation_y(DEGREES_TO_RADIANS(game_state->triangle_y_rotation_degrees));
+	v0.position = mult_mat3x3_vec3(triangle_y_rot, v0.position);
+	v1.position = mult_mat3x3_vec3(triangle_y_rot, v1.position);
+	v2.position = mult_mat3x3_vec3(triangle_y_rot, v2.position);
 	// Translating
-	v0.coordinates[0] += game_state->triangle.position[0];
-	v0.coordinates[1] += game_state->triangle.position[1];
-	v1.coordinates[0] += game_state->triangle.position[0];
-	v1.coordinates[1] += game_state->triangle.position[1];
-	v2.coordinates[0] += game_state->triangle.position[0];
-	v2.coordinates[1] += game_state->triangle.position[1];
+	v0.position = vec3_add(v0.position, game_state->triangle.world_position);
+	v1.position = vec3_add(v1.position, game_state->triangle.world_position);
+	v2.position = vec3_add(v2.position, game_state->triangle.world_position);
 
-	// Flip our Y coordinate to be in screen space (+Y is down)
-	v0.coordinates[1] = -v0.coordinates[1] + offscreen_buffer->height;
-	v1.coordinates[1] = -v1.coordinates[1] + offscreen_buffer->height;
-	v2.coordinates[1] = -v2.coordinates[1] + offscreen_buffer->height;
+	Mat4x4 world_to_opengl_coordinates = {
+		.rows = {
+			[0][0] = 1,
+			[1][1] = 1,
+			[2][2] = -1, // flip z so that +z points out of screen
+			[3][3] = 1,
+		}
+	};
+
+	//////////////////////////////
+	// CREATING CAMERA_TO_WORLD
+	//////////////////////////////
+	// TODO(mal): Once I swich to using Mat4x4 transforms instead of separate orientations and
+	// position structures, create a mat4x4_inverse function that can calculate what I'm doing below
+	// more efficiently!
+	// NOTE(mal): The inverse of an orthogonal matrix (which rotation matrices are), is the same as
+	// its transpose! (An orthogonal matrix is a square matrix whose rows and coumns are orthonormal
+	// vectors e.g. perpendicual to each other and have a length of one).
+	// Compute orientation inverse R^-1
+	Mat3x3 world_to_camera_orientation = mat3x3_transpose(game_state->camera_world_orientation);
+	// Compute translation inverse t^-1 = -R^-1 * t
+	Vec3   world_to_camera_translation = vec3_negate(mult_mat3x3_vec3(world_to_camera_orientation, game_state->camera_world_position));
+	// NOTE(mal): See "Essential Math" 4.3.6 on p136 for why we compute the above this way.
+	Mat4x4 world_to_camera = {0};
+	// Copying orientation
+	for (int r = 0; r < 3; r++) {
+		for (int c = 0; c < 3; c++) {
+			world_to_camera.rows[r][c] = world_to_camera_orientation.rows[r][c];
+		}
+	}
+	// Copying translation
+	world_to_camera.rows[0][3] = world_to_camera_translation.x;
+	world_to_camera.rows[1][3] = world_to_camera_translation.y;
+	world_to_camera.rows[2][3] = world_to_camera_translation.z;
+	world_to_camera.rows[3][3] = 1; // For homogeneous coordinates
+
+	// Translate from world RHS (X+ right, Y+ up, Z+ into) to OpenGL-style RHS
+	world_to_camera = mult_mat4x4_mat4x4(world_to_opengl_coordinates, world_to_camera);
+
+	float vert_fov = PI / 2.0f;
+	float near = 1.0f;
+	float far = 100.0f;
+	float aspect_ratio = (float)offscreen_buffer->width / (float)offscreen_buffer->height;
+	float c = (float)(1.0 / tan(vert_fov / 2.0f));
+
+	// Set up OpenGL-style perspective transform matrix
+	Mat4x4 perspective = {};
+	perspective.rows[0][0] = c / aspect_ratio;
+	perspective.rows[0][1] = 0;
+	perspective.rows[0][2] = 0;
+	perspective.rows[0][3] = 0;
+
+	perspective.rows[1][0] = 0;
+	perspective.rows[1][1] = c;
+	perspective.rows[1][2] = 0;
+	perspective.rows[1][3] = 0;
+
+	perspective.rows[2][0] = 0;
+	perspective.rows[2][1] = 0;
+	perspective.rows[2][2] = -((far + near) / (far - near));
+	perspective.rows[2][3] = -((2 * far * near) / (far - near));
+
+	perspective.rows[3][0] = 0;
+	perspective.rows[3][1] = 0;
+	perspective.rows[3][2] = -1;
+	perspective.rows[3][3] = 0;
+
+	// NDC ranges from [-1, -1] to [1, 1]
+	// We want to map to our screen, which is from [0, 0] to [width, height], and where +y is down
+	Mat4x4 ndc_to_screen = {};
+
+	float half_width = offscreen_buffer->width / 2.0f;
+	float half_height = offscreen_buffer->height / 2.0f;
+	float screen_offset_x = 0.0f;
+	float screen_offset_y = 0.0f;
+
+	ndc_to_screen.rows[0][0] = half_width;
+	ndc_to_screen.rows[0][1] = 0;
+	ndc_to_screen.rows[0][2] = 0;
+	ndc_to_screen.rows[0][3] = half_width + screen_offset_x;
+
+	ndc_to_screen.rows[1][0] = 0;
+	ndc_to_screen.rows[1][1] = -half_height;
+	ndc_to_screen.rows[1][2] = 0;
+	ndc_to_screen.rows[1][3] = (half_height + screen_offset_y);
+
+	// z is a special case since we want to use it for depth testing later.
+	// We want it to range from [0, depth] where depth usually = 1.
+	float depth = 1.0f;
+	float half_depth = depth / 2;
+	ndc_to_screen.rows[2][0] = 0;
+	ndc_to_screen.rows[2][1] = 0;
+	ndc_to_screen.rows[2][2] = half_depth;
+	ndc_to_screen.rows[2][3] = half_depth;
+
+	ndc_to_screen.rows[3][0] = 0;
+	ndc_to_screen.rows[3][1] = 0;
+	ndc_to_screen.rows[3][2] = 0;
+	ndc_to_screen.rows[3][3] = 1;
+
+	Vertex *verts[3] = { &v0, &v1, &v2 };
+	for (int i = 0; i < 3; i++) {
+		Vec4 homogeneous_vert_pos = { .x = verts[i]->position.x, .y = verts[i]->position.y, .z = verts[i]->position.z, .w = 1 };
+		Vec4 view_space_vert = mult_mat4x4_vec4(world_to_camera, homogeneous_vert_pos);
+		Vec4 perspective_vert = mult_mat4x4_vec4(perspective, view_space_vert);
+		perspective_vert.x /= perspective_vert.w;
+		perspective_vert.y /= perspective_vert.w;
+		perspective_vert.z /= perspective_vert.w;
+		perspective_vert.w /= perspective_vert.w; // NOTE(mal): Probably not necessary
+		Vec4 screen_space_vert = mult_mat4x4_vec4(ndc_to_screen, perspective_vert);
+		verts[i]->position = (Vec3){ .x = screen_space_vert.x, .y = screen_space_vert.y, .z = screen_space_vert.z };
+	}
 
 	// NOTE(mal): because we have now essentially mirrored our triangle across
 	// the X axis the winding order of our vertices has technically changed, so
 	// we need to feed the vertices in backward!
-	Vertex vs[3] = { v2, v1, v0 }; // FIXME(mal): Being lazy and copying here
+	Vertex vs[3] = { v2, v1, v0 };
+	// FIXME(mal): We SHOULD be having to point our vertex in backward as indicated above HOWEVER
+	// somewhere in our pipeline we're not mirroring our view across the x axis properly! Our
+	// triangle is upside down (I think)! Or do I have another case where maybe the triangle is
+	// behind the camera and I'm not clipping out anything that's behind the near plane...?
+	// Vertex vs[3] = {v0, v1, v2};
 
-	float area = edge_function(vs[0].coordinates, vs[1].coordinates, vs[2].coordinates);
+	float area = edge_function(vs[0].position, vs[1].position, vs[2].position);
 	// NOTE(mal): NOT optimized!
 	// TODO(mal): Optimization: only loop over pixels within the AABB of the triangle.
 	uint32_t *pixels = (uint32_t *)offscreen_buffer->memory;
@@ -692,10 +879,10 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 			// float p[2] = { (float)col + 0.5f, (float)row + 0.5f }; // testing pixel _centers_, hence the +0.5
 			// NOTE(mal): This is testing the upper left of a pixel,
 			// not its center (for some reason this looks better at the moment).
-			float p[2] = { (float)col, (float)row };
-			float w0 = edge_function(vs[1].coordinates, vs[2].coordinates, p);
-			float w1 = edge_function(vs[2].coordinates, vs[0].coordinates, p);
-			float w2 = edge_function(vs[0].coordinates, vs[1].coordinates, p);
+			Vec3 p = { .x = (float)col, .y = (float)row };
+			float w0 = edge_function(vs[1].position, vs[2].position, p);
+			float w1 = edge_function(vs[2].position, vs[0].position, p);
+			float w2 = edge_function(vs[0].position, vs[1].position, p);
 			size_t pixel_index = col + row * offscreen_buffer->width;
 			pixels[pixel_index] = 0; // set to black
 			if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
@@ -726,20 +913,21 @@ EXPORT void game_update(GameMemory *memory, GameInput *input) {
 	// TODO(mal): Local and world space (2D) have Y pointing up but screen space has Y pointing down.
 	// Need to include a transformation step that flips the direction of our Y axis!
 
-	// Scale
-	game_state->triangle.scale = 100.0f;
+	game_state->camera_world_orientation = mat3x3_create_rotation_y(DEGREES_TO_RADIANS(0.0f));
+	game_state->triangle.scale = 10.0f;
+	game_state->triangle.world_position = (Vec3){ .z = game_state->triangle.scale * 2.0f };
 
 	// Rotate
-	const float rot_speed = 1.5f;
-	if (input->keys_down[GAME_KEY_J]) game_state->triangle.rotation += rot_speed;
-	if (input->keys_down[GAME_KEY_L]) game_state->triangle.rotation -= rot_speed;
-	if (game_state->triangle.rotation > 180.0f) game_state->triangle.rotation -= 360.0f;
-	if (game_state->triangle.rotation < 180.0f) game_state->triangle.rotation += 360.0f;
+	const float rot_speed = 2.0f;
 
-	// Translate
-	const float move_speed = 2.5f;
-	if (input->keys_down[GAME_KEY_A]) game_state->triangle.position[0] -= move_speed;
-	if (input->keys_down[GAME_KEY_D]) game_state->triangle.position[0] += move_speed;
-	if (input->keys_down[GAME_KEY_W]) game_state->triangle.position[1] += move_speed;
-	if (input->keys_down[GAME_KEY_S]) game_state->triangle.position[1] -= move_speed;
+	// if (input->keys_down[GAME_KEY_J]) game_state->triangle_y_rotation_degrees += rot_speed;
+	// if (input->keys_down[GAME_KEY_L]) game_state->triangle_y_rotation_degrees -= rot_speed;
+	
+	game_state->triangle_y_rotation_degrees += rot_speed;
+	if (game_state->triangle_y_rotation_degrees > 180.0f) game_state->triangle_y_rotation_degrees -= 360.0f;
+	if (game_state->triangle_y_rotation_degrees < 180.0f) game_state->triangle_y_rotation_degrees += 360.0f;
+
+	// if (input->keys_down[GAME_KEY_W]) game_state->camera_world_position.z += 1.0f;
+	// if (input->keys_down[GAME_KEY_S]) game_state->camera_world_position.z -= 1.0f;
+
 }
