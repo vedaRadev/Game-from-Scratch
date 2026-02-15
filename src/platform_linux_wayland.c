@@ -25,6 +25,7 @@
 #include <fcntl.h>
 #include <dlfcn.h>
 #include <linux/limits.h>
+#include <errno.h>
 
 #include <stdio.h>
 #include <stdint.h>
@@ -784,6 +785,34 @@ GameCode load_game_code() {
 	return game_code;
 }
 
+char *debug_platform_read_entire_file(char *file_path) {
+	int fd = open(file_path, O_RDWR);
+	ASSERT_MSG_FMT(
+		fd != -1,
+		"Failed to open file %s for reading: %s\n",
+		file_path, strerror(errno)
+	);
+	struct stat file_stat;
+	ASSERT_MSG_FMT(
+		fstat(fd, &file_stat) == 0,
+		"Failed to stat file %s: %s\n",
+		file_path, strerror(errno)
+	);
+	// NOTE(mal): For now I opted to use memory-mapped file I/O rather than opening and
+	// copying the entire file entire memory, which I'm wondering if I should really be
+	// doing. MAP_PRIVATE provides copy-on-write behavior for the mapped memory.
+	char *file_data = mmap(0, (size_t)file_stat.st_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+	return file_data;
+}
+
+void debug_platform_free_entire_file(char *file_data, size_t file_data_len) {
+	ASSERT_MSG_FMT(
+		munmap(file_data, file_data_len) == 0,
+		"Failed to free file %s: %s\n",
+		file_data, strerror(errno)
+	);
+}
+
 int main() {
 	char exe_path[PATH_MAX];
 	ssize_t exe_path_len = 0;
@@ -869,6 +898,8 @@ int main() {
 	GameCode game_code = load_game_code();
 
 	GameMemory game_memory = {0};
+	game_memory.debug_platform_read_entire_file = debug_platform_read_entire_file;
+	game_memory.debug_platform_free_entire_file = debug_platform_free_entire_file;
 	game_memory.storage_size = 4ul * 1024ul * 1024ul;
 	game_memory.storage = mmap(NULL, game_memory.storage_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 

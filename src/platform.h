@@ -158,9 +158,22 @@ typedef struct GameInput {
     // TODO(mal): mouse input
 } GameInput;
 
-// TODO(mal): maybe we should split this up into persistent (across frame boundaries) and scratch storage?
+// NOTE(mal): For real file loading functions we'd want something nonblocking
+// and to protect against data loss (note taken from Casey Muratori's "Handmade
+// Hero")
+#define DEBUG_PLATFORM_READ_ENTIRE_FILE_PARAMS (char *file_path)
+char *debug_platform_read_entire_file DEBUG_PLATFORM_READ_ENTIRE_FILE_PARAMS;
+typedef char *(*DEBUG_PlatformReadEntireFileFunction) DEBUG_PLATFORM_READ_ENTIRE_FILE_PARAMS;
+
+#define DEBUG_PLATFORM_FREE_ENTIRE_FILE_PARAMS (char *file_data, size_t file_len)
+void debug_platform_free_entire_file DEBUG_PLATFORM_FREE_ENTIRE_FILE_PARAMS;
+typedef void (*DEBUG_PlatformFreeEntireFileFunction) DEBUG_PLATFORM_FREE_ENTIRE_FILE_PARAMS;
+
 typedef struct GameMemory {
-    bool is_initialized;
+	DEBUG_PlatformReadEntireFileFunction debug_platform_read_entire_file;
+	DEBUG_PlatformFreeEntireFileFunction debug_platform_free_entire_file;
+
+	// TODO(mal): maybe we should split this up into persistent (across frame boundaries) and scratch storage?
     void *storage;
     size_t storage_size;
 } GameMemory;

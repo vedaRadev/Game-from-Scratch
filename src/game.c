@@ -665,7 +665,8 @@ EXPORT GAME_UPDATE_AND_RENDER_SIGNATURE(update_and_render) {
 
 typedef struct Vertex {
 	Vec3 position;
-	uint32_t color; // argb
+	uint32_t color;   // argb
+	float tx_u, tx_v; // texture coordinates
 } Vertex;
 
 typedef struct Triangle3D {
@@ -675,12 +676,37 @@ typedef struct Triangle3D {
 	float  scale;
 } Triangle3D;
 
+// TODO(mal): It will be critical in the future to introduce some memory allocators and start
+// using them to store some of the data in here. For example, loaded texture data and whatnot.
+// The backing stores of these allocators will be the rest of our GameMemory.storage excluding
+// the GameState structure.
 typedef struct GameState {
 	Triangle3D triangle;
 	float triangle_y_rotation_degrees;
 	Vec3 camera_world_position;
 	Mat3x3 camera_world_orientation; // euler angles
+	unsigned texture_width;
+	unsigned texture_height;
+	uint32_t *texture_pixels;
 } GameState;
+
+// http://www.paulbourke.net/dataformats/tga/
+#pragma pack(push, 1)
+typedef struct TGA_Header {
+	char  idlength;
+	char  colourmaptype;
+	char  datatypecode;
+	short colourmaporigin;
+	short colourmaplength;
+	char  colourmapdepth;
+	short x_origin;
+	short y_origin;
+	short width;
+	short height;
+	char  bitsperpixel;
+	char  imagedescriptor;
+} TGA_Header;
+#pragma pack(pop)
 
 // v0 - first vertex, v1 - second vertex, p - test point
 // Assumes a clockwise winding order.
@@ -704,26 +730,44 @@ float edge_function(Vec3 v0, Vec3 v1, Vec3 p) {
 }
 
 EXPORT void game_init(GameMemory *memory, int initial_width, int initial_height) {
+	ASSERT(memory->debug_platform_read_entire_file);
+	ASSERT(memory->debug_platform_free_entire_file);
+
 	GameState *game_state = (GameState *)memory->storage;
-	// NOTE(mal): Can probably get rid of this check honestly since the platform layer should only
-	// be calling this function once
-	if (!memory->is_initialized) {
-		memory->is_initialized = true;
 
-		// Defining triangle vertices in local space, in clockwise winding order
-		// base left
-		game_state->triangle.local_vertices[0] = (Vertex){ .position = { .x = -1, .y = -1 }, .color = 0x00FF0000 };
-		// top
-		game_state->triangle.local_vertices[1] = (Vertex){ .position = { .x = 0, .y = 1 }, .color = 0x0000FF00 };
-		// base right
-		game_state->triangle.local_vertices[2] = (Vertex){ .position = { .x = 1, .y = -1 }, .color = 0x000000FF };
+	// Defining triangle vertices in local space, in clockwise winding order
+	// base left
+	game_state->triangle.local_vertices[0] = (Vertex){
+		.position = { .x = -1, .y = -1 },
+		.tx_u = 0.0f, .tx_v = 1.0f,
+		.color = 0x00FF0000,
+	};
+	// top
+	game_state->triangle.local_vertices[1] = (Vertex){
+		.position = { .x = 0, .y = 1 },
+		.tx_u = 0.5f, .tx_v = 0.0f,
+		.color = 0x0000FF00,
+	};
+	// base right
+	game_state->triangle.local_vertices[2] = (Vertex){
+		.position = { .x = 1, .y = -1 },
+		.tx_u = 1.0f, .tx_v = 1.0f,
+		.color = 0x000000FF
+	};
 
-		game_state->triangle.world_position = (Vec3){ .x = 0.0f, .y = 0.0f, .z = 5.0f };
-		game_state->triangle.scale = 75.0f;
+	game_state->triangle.world_position = (Vec3){ .x = 0.0f, .y = 0.0f, .z = 5.0f };
+	game_state->triangle.scale = 75.0f;
 
-		game_state->camera_world_position = (Vec3){0};
-		game_state->camera_world_orientation = (Mat3x3){0};
-	}
+	game_state->camera_world_position = (Vec3){0};
+	game_state->camera_world_orientation = (Mat3x3){0};
+
+	char *tga_data = (char *)memory->debug_platform_read_entire_file("../testtexture.tga");
+	TGA_Header *tga_header = (TGA_Header *)tga_data;
+	ASSERT(tga_header->bitsperpixel == 32);
+	ASSERT_MSG(tga_header->datatypecode == 2, "Test texture TGA is not RGB!");
+	game_state->texture_height = tga_header->height;
+	game_state->texture_width  = tga_header->width;
+	game_state->texture_pixels = (uint32_t *)(tga_data + sizeof(TGA_Header));
 }
 
 EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffer) {
@@ -892,16 +936,34 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 				w1 /= area;
 				w2 /= area;
 
-				// Interpolate the color based on the three triangle_vertices vertices
-				float red   = w0 * ((vs[0].color >> 16) & 0xFF) + w1 * ((vs[1].color >> 16) & 0xFF) + w2 * ((vs[2].color >> 16) & 0xFF);
-				float green = w0 * ((vs[0].color >> 8)  & 0xFF) + w1 * ((vs[1].color >> 8)  & 0xFF) + w2 * ((vs[2].color >> 8)  & 0xFF);
-				float blue  = w0 *  (vs[0].color        & 0xFF) + w1 *  (vs[1].color        & 0xFF) + w2 *  (vs[2].color & 0xFF);
+				// // Interpolate the color based on the three triangle_vertices vertices
+				// float red   = w0 * ((vs[0].color >> 16) & 0xFF) + w1 * ((vs[1].color >> 16) & 0xFF) + w2 * ((vs[2].color >> 16) & 0xFF);
+				// float green = w0 * ((vs[0].color >> 8)  & 0xFF) + w1 * ((vs[1].color >> 8)  & 0xFF) + w2 * ((vs[2].color >> 8)  & 0xFF);
+				// float blue  = w0 *  (vs[0].color        & 0xFF) + w1 *  (vs[1].color        & 0xFF) + w2 *  (vs[2].color & 0xFF);
+				// uint8_t red_byte = (uint8_t)red;
+				// uint8_t blue_byte = (uint8_t)blue;
+				// uint8_t green_byte = (uint8_t)green;
+				// uint32_t color = (red_byte << 16) | (blue_byte << 8) | (green_byte);
+				// pixels[col + row * offscreen_buffer->width] = color;
 
-				uint8_t red_byte = (uint8_t)red;
-				uint8_t blue_byte = (uint8_t)blue;
-				uint8_t green_byte = (uint8_t)green;
-				uint32_t color = (red_byte << 16) | (blue_byte << 8) | (green_byte);
-				pixels[col + row * offscreen_buffer->width] = color;
+				float tx_u = w0 * vs[0].tx_u + w1 * vs[1].tx_u + w2 * vs[2].tx_u;
+				float tx_v = w0 * vs[0].tx_v + w1 * vs[1].tx_v + w2 * vs[2].tx_v;
+				unsigned tx_x = (unsigned)(tx_u * game_state->texture_width);
+				unsigned tx_y = (unsigned)(tx_v * game_state->texture_height);
+				unsigned texel_index = tx_x + tx_y * game_state->texture_width;
+				// uint8_t texel_red   = game_state->texture_data[texel_index];
+				// uint8_t texel_green = game_state->texture_data[texel_index + 2];
+				// uint8_t texel_blue  = game_state->texture_data[texel_index + 3];
+
+				// FIXME(mal): Need to detect machine's endianness and extract the bits
+				// properly. Check the 32-bit color format of TGA (or any other texture
+				// file we may load). I believe it's BGRA.
+				uint32_t texel_tga_color = game_state->texture_pixels[texel_index];
+				uint8_t  texel_red   = (texel_tga_color & 0x00FF0000) >> 16;
+				uint8_t  texel_green = (texel_tga_color & 0x0000FF00) >> 8;
+				uint8_t  texel_blue  = texel_tga_color & 0x000000FF;
+				uint32_t texel_color = (texel_red << 16) | (texel_green << 8) | texel_blue;
+				pixels[col + row * offscreen_buffer->width] = texel_color;
 			}
 		}
 	}
@@ -920,10 +982,9 @@ EXPORT void game_update(GameMemory *memory, GameInput *input) {
 	// Rotate
 	const float rot_speed = 2.0f;
 
+	game_state->triangle_y_rotation_degrees += rot_speed;
 	// if (input->keys_down[GAME_KEY_J]) game_state->triangle_y_rotation_degrees += rot_speed;
 	// if (input->keys_down[GAME_KEY_L]) game_state->triangle_y_rotation_degrees -= rot_speed;
-	
-	game_state->triangle_y_rotation_degrees += rot_speed;
 	if (game_state->triangle_y_rotation_degrees > 180.0f) game_state->triangle_y_rotation_degrees -= 360.0f;
 	if (game_state->triangle_y_rotation_degrees < 180.0f) game_state->triangle_y_rotation_degrees += 360.0f;
 

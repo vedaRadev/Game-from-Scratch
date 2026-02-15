@@ -48,7 +48,7 @@ build_game() {
 	# shared library.
 	echo "creating game lib lock file"
 	echo "game build in progress" > game.lock
-	gcc -shared "$SRC_DIR"/game.c -o game.so \
+	gcc -shared -fPIC "$SRC_DIR"/game.c -o game.so \
 		-lm \
 		$COMMON_COMPILER_FLAGS $COMMON_LINKER_FLAGS
 	rm game.lock
