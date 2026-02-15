@@ -1,5 +1,5 @@
-#include <windows.h>
 #include "platform.h"
+#include <windows.h>
 
 typedef struct OffscreenBuffer {
     BITMAPINFO info;
@@ -12,7 +12,9 @@ typedef struct OffscreenBuffer {
 typedef struct GameCode {
     HMODULE dll;
     FILETIME dll_last_write_time;
-    GameUpdateAndRender update_and_render;
+    GameInitFunction   game_init;
+    GameUpdateFunction game_update;
+    GameRenderFunction game_render;
 } GameCode;
 
 static bool game_is_running = false;
@@ -61,9 +63,13 @@ GameCode load_game_code(const wchar_t *game_dll_path, const wchar_t *game_temp_d
         CopyFileW(game_dll_path, game_temp_dll_path, false);
         game_code.dll_last_write_time = game_dll_file_attributes.ftLastWriteTime;
         game_code.dll = LoadLibraryW(game_temp_dll_path);
-        if (game_code.dll) {
-            game_code.update_and_render = (GameUpdateAndRender)GetProcAddress(game_code.dll, "update_and_render");
-        }
+        ASSERT_MSG(game_code.dll, "Failed to load game dll");
+        game_code.game_init   = (GameInitFunction)GetProcAddress(game_code.dll, "game_init");
+        game_code.game_update = (GameUpdateFunction)GetProcAddress(game_code.dll, "game_update");
+        game_code.game_render = (GameRenderFunction)GetProcAddress(game_code.dll, "game_render");
+        ASSERT(game_code.game_init);
+        ASSERT(game_code.game_update);
+        ASSERT(game_code.game_render);
     }
 
     return game_code;
@@ -270,6 +276,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
         return 1;
     }
 
+    game_code.game_init(&game_memory, offscreen_buffer.width, offscreen_buffer.height);
+
     LARGE_INTEGER query_performance_frequency_result;
     QueryPerformanceFrequency(&query_performance_frequency_result);
     wall_clock_frequency = query_performance_frequency_result.QuadPart;
@@ -360,15 +368,14 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
             }
         }
 
-        if (game_code.update_and_render) {
-            GameOffscreenBuffer buf;
-            buf.memory = offscreen_buffer.memory;
-            buf.width = offscreen_buffer.width;
-            buf.height = offscreen_buffer.height;
-            buf.bytes_per_pixel = offscreen_buffer.bytes_per_pixel;
+        game_code.game_update(&game_memory, &game_input);
 
-            game_code.update_and_render(&buf, &game_input, &game_memory);
-        }
+        GameOffscreenBuffer buf;
+        buf.memory = offscreen_buffer.memory;
+        buf.width = offscreen_buffer.width;
+        buf.height = offscreen_buffer.height;
+        buf.bytes_per_pixel = offscreen_buffer.bytes_per_pixel;
+        game_code.game_render(&game_memory, &buf);
 
         HDC device_context = GetDC(game_window);
         WindowClientDimensions client = get_window_client_dimensions(game_window);

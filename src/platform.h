@@ -9,10 +9,13 @@
 // I'm going to do a unity build or not yet.
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h> // TODO(mal): Should this be here in the header or the implementations of
+                   // platform.h? I only put it here because the assertion macros use it (though
+                   // technically ofc that code actually is pasted into the files using the macros).
 // TODO(mal): Instead of this, maybe make types b8, b16, b32, b64 etc.
 typedef enum { false, true } bool;
 
-// TODO(mal): If not unity build, move into own file?
+// TODO(mal): Move assertion macros into their own file?
 // TODO(mal): This assumes that we're running while hooked up to a debugger and can catch a crash.
 // See GEA 3rd p126 for details on a perhaps more-proper assertion implementation. Probably want to
 // use the __FILE__ and __LINE__ macros to report when an assertion fails, then use some inline
@@ -163,9 +166,8 @@ typedef struct GameMemory {
 } GameMemory;
 
 #if defined(_MSC_VER)
-    // TODO(mal): document why we don't have to declare __declspec(dllexport/dllimport) when using MSVC
-    // (reminder: we're declaring -EXPORT:func_name to the linker in our build script)
-    #define EXPORT
+	// NOTE(mal): If using -EXPORT in build script, don't have to specify __declspec(dllexport/import) here
+    #define EXPORT __declspec(dllexport)
 #elif defined(__GNUC__)
 	#define EXPORT __attribute__((visibility("default")))
 #else
@@ -174,15 +176,15 @@ typedef struct GameMemory {
 #endif
 
 #define GAME_INIT_PARAMS (GameMemory *memory, int initial_width, int initial_height)
-void game_init GAME_INIT_PARAMS;
+EXPORT void game_init GAME_INIT_PARAMS;
 typedef void (*GameInitFunction) GAME_INIT_PARAMS;
 
 #define GAME_RENDER_PARAMS (GameMemory *memory, GameOffscreenBuffer *offscreen_buffer)
-void game_render GAME_RENDER_PARAMS;
+EXPORT void game_render GAME_RENDER_PARAMS;
 typedef void (*GameRenderFunction) GAME_RENDER_PARAMS;
 
 #define GAME_UPDATE_PARAMS (GameMemory *memory, GameInput *input)
-void game_update GAME_UPDATE_PARAMS;
+EXPORT void game_update GAME_UPDATE_PARAMS;
 typedef void (*GameUpdateFunction) GAME_UPDATE_PARAMS;
 
 // // NOTE(mal): Just leaving the old way of doing this here in case I want to go back to it

@@ -34,7 +34,8 @@ echo creating game dll lock file
 echo game dll build in progress > game.lock
 cl %SRC_DIR%\game.c -Fmgame.map -LD ^
     %COMMON_COMPILER_FLAGS% ^
-    /link %COMMON_LINKER_FLAGS% -EXPORT:update_and_render
+    /link %COMMON_LINKER_FLAGS%
+REM -EXPORT:game_update -EXPORT:game_render -EXPORT:game_init
 del game.lock
 echo game dll lock file deleted
 

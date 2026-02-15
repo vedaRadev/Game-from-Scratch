@@ -103,7 +103,7 @@ Vec3 vec3_cross(Vec3 a, Vec3 b) {
 }
 
 void vec3_normalize(Vec3 *v) {
-	float magnitude = sqrt((v->x * v->x) + (v->y * v->y) + (v->z * v->z));
+	float magnitude = (float)sqrt((v->x * v->x) + (v->y * v->y) + (v->z * v->z));
 	v->x /= magnitude;
 	v->y /= magnitude;
 	v->z /= magnitude;
