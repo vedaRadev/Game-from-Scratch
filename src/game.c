@@ -10,13 +10,12 @@
 // Review "Essential Math" 4.3.6 about application of affine transformations.
 // Actually, need to review what the definition of an affine transformation is.
 //
-// Pretty sure the 3D triangle projection stuff is working probably and I just
-// don't have the camera set up to actually look at the triangle.
-//
-// Perspective-correct vertex attribute interpolation!
-//
 // Review the logic behind setting up perspective and ndc-to-screen matrices so
 // that I can do it for any arbitrary coordinate system.
+//
+// Move all the matrix transformation setup stuff into initialization and find a
+// way to only recompute when needed (e.g. window size changed).
+// Maybe need to export a new function for the platform layer to load?
 //
 // Maybe introduce the following convention for all my math functions:
 // - In-place modifications follow naming convention e.g.: vec3_normalized
@@ -549,7 +548,7 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 	// Compute orientation inverse R^-1
 	Mat3x3 world_to_camera_orientation = mat3x3_transpose(game_state->camera_world_orientation);
 	// Compute translation inverse t^-1 = -R^-1 * t
-	Vec3   world_to_camera_translation = vec3_negate(mult_mat3x3_vec3(world_to_camera_orientation, game_state->camera_world_position));
+	Vec3 world_to_camera_translation = vec3_negate(mult_mat3x3_vec3(world_to_camera_orientation, game_state->camera_world_position));
 	// NOTE(mal): See "Essential Math" 4.3.6 on p136 for why we compute the above this way.
 	Mat4x4 world_to_camera = {0};
 	// Copying orientation
@@ -659,16 +658,18 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 		v2.position = vec3_add(v2.position, game_state->square.world_position);
 
 		Vertex *verts[3] = { &v0, &v1, &v2 };
-		float post_projection_reciprocal_ws[3];
+		float reciprocal_depth[3];
 		for (int i = 0; i < 3; i++) {
+			reciprocal_depth[i] = 1.0f / verts[i]->position.z;
 			Vec4 homogeneous_vert_pos = { .x = verts[i]->position.x, .y = verts[i]->position.y, .z = verts[i]->position.z, .w = 1 };
 			Vec4 view_space_vert = mult_mat4x4_vec4(world_to_camera, homogeneous_vert_pos);
-			Vec4 perspective_vert = mult_mat4x4_vec4(perspective, view_space_vert); // NOTE(mal): in NDC space
-			post_projection_reciprocal_ws[i] = 1.0f / perspective_vert.w;
-			perspective_vert.x /= perspective_vert.w;
-			perspective_vert.y /= perspective_vert.w;
-			perspective_vert.z /= perspective_vert.w;
-			perspective_vert.w /= perspective_vert.w;
+			Vec4 perspective_vert = mult_mat4x4_vec4(perspective, view_space_vert);
+			// NOTE(mal): After perspective projection we are now in NDC space.
+			float reciprocal_w = 1.0f / perspective_vert.w;
+			perspective_vert.x *= reciprocal_w;
+			perspective_vert.y *= reciprocal_w;
+			perspective_vert.z *= reciprocal_w;
+			perspective_vert.w *= reciprocal_w;
 			Vec4 screen_space_vert = mult_mat4x4_vec4(ndc_to_screen, perspective_vert);
 			verts[i]->position = (Vec3){ .x = screen_space_vert.x, .y = screen_space_vert.y, .z = screen_space_vert.z };
 		}
@@ -679,11 +680,31 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 		// TODO(mal): Instead of copying or changing to Vertex *vs[3], just hard-code which vertices
 		// we're using directly.
 		Vertex vs[3] = { v2, v1, v0 };
-		float post_projection_reciprocal_ws_2[3] = { post_projection_reciprocal_ws[2], post_projection_reciprocal_ws[1], post_projection_reciprocal_ws[0] };
+		float reciprocal_depth_2[3] = { reciprocal_depth[2], reciprocal_depth[1], reciprocal_depth[0] };
 		float area = edge_function(vs[0].position, vs[1].position, vs[2].position);
 		float reciprocal_area = 1 / area;
-		for (int row = 0; row < offscreen_buffer->height; row++) {
-			for (int col = 0; col < offscreen_buffer->width; col++) {
+		// Compute the AABB of the triangle so that we don't have to loop over the entire buffer
+		// every time regardless of the size of the triangle.
+		// TODO(mal): Maybe create to_vec3_max(Vec3 a, Vec3 b) and to_vec3_min(Vec3 a, Vec3 b)
+		// functions and call those here instead?
+		int xmax =
+			vs[0].position.x > vs[1].position.x
+			? (vs[0].position.x > vs[2].position.x ? vs[0].position.x : vs[2].position.x)
+			: (vs[1].position.x > vs[2].position.x ? vs[1].position.x : vs[2].position.x);
+		int xmin =
+			vs[0].position.x < vs[1].position.x
+			? (vs[0].position.x < vs[2].position.x ? vs[0].position.x : vs[2].position.x)
+			: (vs[1].position.x < vs[2].position.x ? vs[1].position.x : vs[2].position.x);
+		int ymax =
+			vs[0].position.y > vs[1].position.y
+			? (vs[0].position.y > vs[2].position.y ? vs[0].position.y : vs[2].position.y)
+			: (vs[1].position.y > vs[2].position.y ? vs[1].position.y : vs[2].position.y);
+		int ymin =
+			vs[0].position.y < vs[1].position.y
+			? (vs[0].position.y < vs[2].position.y ? vs[0].position.y : vs[2].position.y)
+			: (vs[1].position.y < vs[2].position.y ? vs[1].position.y : vs[2].position.y);
+		for (int row = ymin; row < ymax; row++) {
+			for (int col = xmin; col < xmax; col++) {
 				// float p[2] = { (float)col + 0.5f, (float)row + 0.5f }; // testing pixel _centers_, hence the +0.5
 				// NOTE(mal): This is testing the upper left of a pixel,
 				// not its center (for some reason this looks better at the moment).
@@ -704,15 +725,13 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 
 					// TODO(mal): Rename some of this stuff. Names are taken from Realtime
 					// Rendering. See p1000 for perspective-correct barycentric interpolation.
-					float f0 = w0 * post_projection_reciprocal_ws_2[0];
-					float f1 = w1 * post_projection_reciprocal_ws_2[1];
-					float f2 = w2 * post_projection_reciprocal_ws_2[2];
+					// I believe here we're essentially foreshortening our barycentric coordinates.
+					float f0 = w0 * reciprocal_depth_2[0];
+					float f1 = w1 * reciprocal_depth_2[1];
+					float f2 = w2 * reciprocal_depth_2[2];
 					float perspective_reciprocal_area = 1.0f / (f0 + f1 + f2);
 					float tx_u = (f0 * vs[0].tx_u + f1 * vs[1].tx_u + f2 * vs[2].tx_u) * perspective_reciprocal_area;
 					float tx_v = (f0 * vs[0].tx_v + f1 * vs[1].tx_v + f2 * vs[2].tx_v) * perspective_reciprocal_area;
-
-					// NOTE(mal): unused, but keeping just in case I use it in the future
-					// float z = 1 / (w0 * vs[0].position.z + w1 * vs[1].position.z + w2 * vs[2].position.z);
 					
 					unsigned tx_x = (unsigned)(tx_u * game_state->texture_width);
 					unsigned tx_y = (unsigned)(tx_v * game_state->texture_height);
