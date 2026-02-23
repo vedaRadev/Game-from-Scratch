@@ -23,6 +23,8 @@
 // Example:
 // void vec3_normalized(Vec3 *v) { /* ... */ } // in-place modification
 // Vec3 vec3_to_normalized(const Vec3 *v) { /* ... */ } // no modification
+// void vec3_add_vec3(Vec3 *v);
+// void vec3_to_add_vec3(Vec3 a, Vec3 b); Iunno, workshop it
 
 #include <stdint.h>
 #include <math.h>
@@ -454,30 +456,6 @@ EXPORT void game_init(GameMemory *memory, int initial_width, int initial_height)
 
 	GameState *game_state = (GameState *)memory->storage;
 
-	/*
-	// Defining triangle vertices in local space, in clockwise winding order
-	// base left
-	game_state->triangle.local_vertices[0] = (Vertex){
-		.position = { .x = -1, .y = -1 },
-		.tx_u = 0.0f, .tx_v = 1.0f,
-		.color = 0x00FF0000,
-	};
-	// top
-	game_state->triangle.local_vertices[1] = (Vertex){
-		.position = { .x = 0, .y = 1 },
-		.tx_u = 0.5f, .tx_v = 0.0f,
-		.color = 0x0000FF00,
-	};
-	// base right
-	game_state->triangle.local_vertices[2] = (Vertex){
-		.position = { .x = 1, .y = -1 },
-		.tx_u = 1.0f, .tx_v = 1.0f,
-		.color = 0x000000FF
-	};
-	game_state->triangle.world_position = (Vec3){ .x = 0.0f, .y = 0.0f, .z = 5.0f };
-	game_state->triangle.scale = 75.0f;
-	*/
-
 	// 0: Square bottom left
 	game_state->square.local_vertices[0] = (Vertex){
 		.position = { .x = -1, .y = -1 },
@@ -566,28 +544,54 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 	// Translate from world RHS (X+ right, Y+ up, Z+ into) to OpenGL-style RHS
 	world_to_camera = mult_mat4x4_mat4x4(world_to_opengl_coordinates, world_to_camera);
 
-	float vert_fov = PI / 2.0f;
+	float vert_fov = DEGREES_TO_RADIANS(90.0f);
 	float near = 1.0f;
 	float far = 100.0f;
 	float aspect_ratio = (float)offscreen_buffer->width / (float)offscreen_buffer->height;
-	float c = (float)(1.0 / tan(vert_fov / 2.0f));
+
+	// NOTE(mal): d here is the distance from view origin to the plane onto which we're projecting
+	// R3 points down to R2. Its value is really somewhat arbitrary since any point along the view
+	// space z axis will project to the same point on our 2D image plane (given that d > 0... d < 0
+	// will result in a flipped image). However, setting it to the cotangent of half the vertical
+	// fov does mean that any point which intersects at the top/bottom of our view frustum will map
+	// the Y component to 1/-1, which is very convenient for mapping into a unit cube (NDC space)
+	// which we'll use for clipping and eventually conversion to screen space. It just means that we
+	// don't have to do an extra division later to normalize our coordinates to be in the range [-1, 1].
+	// See Essential Math 7.3.5 p246 for this derivation of d.
+	// Another insight: we are solving for d such that the half height of our 2D image plane is 1
+	// unit. This is why we divide our vert_fov in half -- because we're just considering one half of
+	// our Y frustum. Also recall that coordinates in NDC space are in range [-1, 1].
+	float d = (float)(1.0f / tan(vert_fov / 2.0f));
+
+	// NOTE(mal): A pure form of the perspective projection matrix just performs a division of x and
+	// y coordinates by z (using perspective divide with w). More useful forms actually will also
+	// scale x,y into NDC range via d and the aspect ratio, and will also remap Z into NDC depth
+	// range via the near and far plane values.
+	// NOTE(mal): If we were not using d and aspect_ratio we would do X component NDC mapping using
+	// left and right values of the frustum planes similar to how we're using near and far.
 
 	// Set up OpenGL-style perspective transform matrix
 	Mat4x4 perspective = {};
-	perspective.rows[0][0] = c / aspect_ratio;
+	// NOTE(mal): We account for the fact here that pixels aren't necessarily square and that the
+	// horizontal FOV may differ from the vertical FOV.
+	perspective.rows[0][0] = d / aspect_ratio;
 	perspective.rows[0][1] = 0;
 	perspective.rows[0][2] = 0;
 	perspective.rows[0][3] = 0;
 
 	perspective.rows[1][0] = 0;
-	perspective.rows[1][1] = c;
+	perspective.rows[1][1] = d;
 	perspective.rows[1][2] = 0;
 	perspective.rows[1][3] = 0;
 
 	perspective.rows[2][0] = 0;
 	perspective.rows[2][1] = 0;
+	// Preserving and remapping depth values from [-near, -far] (because we look down -z in RHS view
+	// space) to be [-1, 1].
+	// NOTE(mal): That this does NOT clip or cull vertices! If a vertex depth < near or depth > far
+	// then it just gets assigned an NDC Z value of -1 or 1, respectively.
 	perspective.rows[2][2] = -((far + near) / (far - near));
-	perspective.rows[2][3] = -((2 * far * near) / (far - near));
+	perspective.rows[2][3] = -((2.0f * far * near) / (far - near));
 
 	perspective.rows[3][0] = 0;
 	perspective.rows[3][1] = 0;
@@ -664,7 +668,11 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 			Vec4 homogeneous_vert_pos = { .x = verts[i]->position.x, .y = verts[i]->position.y, .z = verts[i]->position.z, .w = 1 };
 			Vec4 view_space_vert = mult_mat4x4_vec4(world_to_camera, homogeneous_vert_pos);
 			Vec4 perspective_vert = mult_mat4x4_vec4(perspective, view_space_vert);
-			// NOTE(mal): After perspective projection we are now in NDC space.
+			// NOTE(mal): If our perspective projection is set up right, then the resulting point
+			// should be in a space which is our viewing frustum transformed into a unit cube.
+			// From RTR 4.7.2 p98: "The perspective transform in any form followed by clipping and
+			// homogenization (division by w) results in normalized device coordinates.
+			// TODO(mal): Clip, then perform perspective divide?
 			float reciprocal_w = 1.0f / perspective_vert.w;
 			perspective_vert.x *= reciprocal_w;
 			perspective_vert.y *= reciprocal_w;
@@ -678,7 +686,7 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 		// the X axis the winding order of our vertices has technically changed, so
 		// we need to feed the vertices in backward!
 		// TODO(mal): Instead of copying or changing to Vertex *vs[3], just hard-code which vertices
-		// we're using directly.
+		// we're using directly?
 		Vertex vs[3] = { v2, v1, v0 };
 		float reciprocal_depth_2[3] = { reciprocal_depth[2], reciprocal_depth[1], reciprocal_depth[0] };
 		float area = edge_function(vs[0].position, vs[1].position, vs[2].position);
@@ -703,8 +711,16 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 			vs[0].position.y < vs[1].position.y
 			? (vs[0].position.y < vs[2].position.y ? vs[0].position.y : vs[2].position.y)
 			: (vs[1].position.y < vs[2].position.y ? vs[1].position.y : vs[2].position.y);
+
+		// TODO(mal): Do actual vertex clipping and get rid of this
+		ymin = ymin < 0 ? 0 : ymin;
+		ymax = ymax > offscreen_buffer->height ? offscreen_buffer->height : ymax;
+		xmin = xmin < 0 ? 0 : xmin;
+		xmax = xmax > offscreen_buffer->width ? offscreen_buffer->width : xmax;
+
 		for (int row = ymin; row < ymax; row++) {
 			for (int col = xmin; col < xmax; col++) {
+
 				// float p[2] = { (float)col + 0.5f, (float)row + 0.5f }; // testing pixel _centers_, hence the +0.5
 				// NOTE(mal): This is testing the upper left of a pixel,
 				// not its center (for some reason this looks better at the moment).
@@ -776,7 +792,8 @@ EXPORT void game_update(GameMemory *memory, GameInput *input) {
 	// Rotate
 	const float rot_speed = 2.0f;
 
-	game_state->rotation_y_degrees += rot_speed;
+	// game_state->rotation_y_degrees += rot_speed;
+
 	// if (input->keys_down[GAME_KEY_J]) game_state->rotation_y_degrees += rot_speed;
 	// if (input->keys_down[GAME_KEY_L]) game_state->rotation_y_degrees -= rot_speed;
 	if (game_state->rotation_y_degrees > 180.0f) game_state->rotation_y_degrees -= 360.0f;

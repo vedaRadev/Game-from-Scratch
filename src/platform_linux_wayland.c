@@ -3,6 +3,11 @@
 //   Then we'll be able to re-render immediately in response to toplevel/surface config events.
 //   Though how often will a user e.g. be resizing the window and be like "damn I wish the screen
 //   didn't flicker while doing this :("?
+//
+// - Separate the size of the window surface from the size of the buffer we are rendering to.
+//   Basically, I want to be able to stretch our buffer to fit the window size like we do in the
+//   windows platform layer. Right now the resolution of our offscreen buffer is tied to the window
+//   size! BAD.
 
 #include <xkbcommon/xkbcommon-keysyms.h>
 #define _POSIX_C_SOURCE 200112L
