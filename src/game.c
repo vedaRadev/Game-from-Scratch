@@ -440,11 +440,8 @@ typedef struct TGA_Header {
 // vectors (p - v0) and (v1 - v0) and the determinant of the 2D matrix formed by
 // the same two vectors.
 
-// float edge_function(Vec2 v0, Vec2 v1, Vec2 p) {
-// 	float result = (p.x - v0.x) * (v1.y - v0.y) - (p.y - v0.y) * (v1.x - v0.x);
-// 	return result;
-// }
-
+// NOTE(mal): Vec3 but we're only checking x and y coords. Maybe it's best to just pass the
+// components in directlry?
 float edge_function(Vec3 v0, Vec3 v1, Vec3 p) {
 	float result = (p.x - v0.x) * (v1.y - v0.y) - (p.y - v0.y) * (v1.x - v0.x);
 	return result;
@@ -718,26 +715,45 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 		xmin = xmin < 0 ? 0 : xmin;
 		xmax = xmax > offscreen_buffer->width ? offscreen_buffer->width : xmax;
 
-		for (int row = ymin; row < ymax; row++) {
-			for (int col = xmin; col < xmax; col++) {
+		// NOTE(mal): Avoiding per-pixel edge function computation. This should be possible because the
+		// edge function is linear. Thus,
+		// E(x + 1, y) = E(x, y) + dY
+		// E(x, y + 1) = E(x, y) - dX
+		// https://www.cs.drexel.edu/~deb39/Classes/Papers/comp175-06-pineda.pdf
+		// Taking the algorithm for stepping from here: https://www.youtube.com/watch?v=k5wtuKWmV48
+		// at chapter "Avoiding Computing the Edge Function Per-Pixel".
+		//
+		// Prime our linear stepping with weights using point at topleft of the triangle's bounding box.
+		Vec3 p = { .x = (float)xmin + 0.5f, .y = (float)ymin + 0.5f }; // test pixel center
+		float w0_row = edge_function(vs[1].position, vs[2].position, p);
+		float w1_row = edge_function(vs[2].position, vs[0].position, p);
+		float w2_row = edge_function(vs[0].position, vs[1].position, p);
 
-				// float p[2] = { (float)col + 0.5f, (float)row + 0.5f }; // testing pixel _centers_, hence the +0.5
-				// NOTE(mal): This is testing the upper left of a pixel,
-				// not its center (for some reason this looks better at the moment).
-				Vec3 p = { .x = (float)col, .y = (float)row };
-				float w0 = edge_function(vs[1].position, vs[2].position, p);
-				float w1 = edge_function(vs[2].position, vs[0].position, p);
-				float w2 = edge_function(vs[0].position, vs[1].position, p);
-				size_t pixel_index = col + row * offscreen_buffer->width;
+		// Constant weight deltas for horizontal and vertical steps
+		//
+		// From my edge function, given how I set it up:
+		// (px - v0x) * (v1y - v0y) - (py - v0y) * (v1x - v0x)
+		// (px*v1y - px*v0y -v0x*v1y + v0x*v0y) - (py*v1x - py*v0x - v0y*v1x + v0y*v0x)
+		// px*v1y - px*v0y - v0x*v1y + v0x*v0y - py*v1x + py*v0x + v0y*v1x - v0y*v0x
+		// px*v1y - px*v0y - v0x*v1y - py*v1x + py*v0x + v0y*v1x
+		// px(v1y - v0y) - v0x*v1y + py(-v1x + v0x) + v0y*v1x
+		// px(v1y - v0y) + py(v0x - v1x) - v0x*v1y + v0y*v1x
+		// The term multiplying px is the column delta and the term multiplying py is the row delta.
+		float d_w0_col = (vs[2].position.y - vs[1].position.y);
+		float d_w1_col = (vs[0].position.y - vs[2].position.y);
+		float d_w2_col = (vs[1].position.y - vs[0].position.y);
+		float d_w0_row = (vs[1].position.x - vs[2].position.x);
+		float d_w1_row = (vs[2].position.x - vs[0].position.x);
+		float d_w2_row = (vs[0].position.x - vs[1].position.x);
+
+		for (int row = ymin; row < ymax; row++) {
+			float w0 = w0_row;
+			float w1 = w1_row;
+			float w2 = w2_row;
+			for (int col = xmin; col < xmax; col++) {
 				if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
 					// If p was inside the triangle_vertices, compute its barycentric coordinates for vertex
 					// attribute interpolation.
-
-					// w0 *= reciprocal_area;
-					// w1 *= reciprocal_area;
-					// w2 *= reciprocal_area;
-					// float tx_u = w0 * vs[0].tx_u + w1 * vs[1].tx_u + w2 * vs[2].tx_u;
-					// float tx_v = w0 * vs[0].tx_v + w1 * vs[1].tx_v + w2 * vs[2].tx_v;
 
 					// TODO(mal): Rename some of this stuff. Names are taken from Realtime
 					// Rendering. See p1000 for perspective-correct barycentric interpolation.
@@ -757,13 +773,21 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 					// properly. Check the 32-bit color format of TGA (or any other texture
 					// file we may load). I believe it's BGRA.
 					uint32_t texel_tga_color = game_state->texture_pixels[texel_index];
-					uint8_t  texel_red   = (texel_tga_color & 0x00FF0000) >> 16;
-					uint8_t  texel_green = (texel_tga_color & 0x0000FF00) >> 8;
-					uint8_t  texel_blue  = texel_tga_color & 0x000000FF;
-					uint32_t texel_color = (texel_red << 16) | (texel_green << 8) | texel_blue;
+					uint8_t  texel_red       = (texel_tga_color & 0x00FF0000) >> 16;
+					uint8_t  texel_green     = (texel_tga_color & 0x0000FF00) >> 8;
+					uint8_t  texel_blue      = texel_tga_color & 0x000000FF;
+					uint32_t texel_color     = (texel_red << 16) | (texel_green << 8) | texel_blue;
 					pixels[col + row * offscreen_buffer->width] = texel_color;
 				}
+
+				w0 += d_w0_col;
+				w1 += d_w1_col;
+				w2 += d_w2_col;
 			}
+
+			w0_row += d_w0_row;
+			w1_row += d_w1_row;
+			w2_row += d_w2_row;
 		}
 	}
 }
@@ -794,8 +818,8 @@ EXPORT void game_update(GameMemory *memory, GameInput *input) {
 
 	// game_state->rotation_y_degrees += rot_speed;
 
-	// if (input->keys_down[GAME_KEY_J]) game_state->rotation_y_degrees += rot_speed;
-	// if (input->keys_down[GAME_KEY_L]) game_state->rotation_y_degrees -= rot_speed;
+	if (input->keys_down[GAME_KEY_J]) game_state->rotation_y_degrees += rot_speed;
+	if (input->keys_down[GAME_KEY_L]) game_state->rotation_y_degrees -= rot_speed;
 	if (game_state->rotation_y_degrees > 180.0f) game_state->rotation_y_degrees -= 360.0f;
 	if (game_state->rotation_y_degrees < 180.0f) game_state->rotation_y_degrees += 360.0f;
 
