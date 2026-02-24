@@ -17,6 +17,8 @@
 // way to only recompute when needed (e.g. window size changed).
 // Maybe need to export a new function for the platform layer to load?
 //
+// Fiddle around with using quaternions for rotations and whatnot.
+//
 // Maybe introduce the following convention for all my math functions:
 // - In-place modifications follow naming convention e.g.: vec3_normalized
 // - Functions that do NOT modify in-pace follow convetion: vec3_to_normalized
@@ -661,7 +663,6 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 		Vertex *verts[3] = { &v0, &v1, &v2 };
 		float reciprocal_depth[3];
 		for (int i = 0; i < 3; i++) {
-			reciprocal_depth[i] = 1.0f / verts[i]->position.z;
 			Vec4 homogeneous_vert_pos = { .x = verts[i]->position.x, .y = verts[i]->position.y, .z = verts[i]->position.z, .w = 1 };
 			Vec4 view_space_vert = mult_mat4x4_vec4(world_to_camera, homogeneous_vert_pos);
 			Vec4 perspective_vert = mult_mat4x4_vec4(perspective, view_space_vert);
@@ -670,7 +671,10 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 			// From RTR 4.7.2 p98: "The perspective transform in any form followed by clipping and
 			// homogenization (division by w) results in normalized device coordinates.
 			// TODO(mal): Clip, then perform perspective divide?
+			// NOTE(mal): After perspective projection and befoe perspective divide, the w
+			// component IS our view-space Z (depth) coordinate!
 			float reciprocal_w = 1.0f / perspective_vert.w;
+			reciprocal_depth[i] = reciprocal_w;
 			perspective_vert.x *= reciprocal_w;
 			perspective_vert.y *= reciprocal_w;
 			perspective_vert.z *= reciprocal_w;
@@ -752,6 +756,19 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 			float w2 = w2_row;
 			for (int col = xmin; col < xmax; col++) {
 				if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
+					// HACK(mal): poor man's clipping to avoid crashing
+					// TODO(mal): Get rid of this once clipping is actually added.
+					int has_negative_depth = 0;
+					for (int i = 0; i < 3; i++) {
+						if (reciprocal_depth_2[i] < 0) {
+							has_negative_depth = 1;
+							break;
+						}
+					}
+					if (has_negative_depth) {
+						continue;
+					}
+
 					// If p was inside the triangle_vertices, compute its barycentric coordinates for vertex
 					// attribute interpolation.
 
@@ -816,13 +833,13 @@ EXPORT void game_update(GameMemory *memory, GameInput *input) {
 	// Rotate
 	const float rot_speed = 2.0f;
 
-	// game_state->rotation_y_degrees += rot_speed;
+	game_state->rotation_y_degrees += rot_speed;
 
-	if (input->keys_down[GAME_KEY_J]) game_state->rotation_y_degrees += rot_speed;
-	if (input->keys_down[GAME_KEY_L]) game_state->rotation_y_degrees -= rot_speed;
+	// if (input->keys_down[GAME_KEY_J]) game_state->rotation_y_degrees += rot_speed;
+	// if (input->keys_down[GAME_KEY_L]) game_state->rotation_y_degrees -= rot_speed;
 	if (game_state->rotation_y_degrees > 180.0f) game_state->rotation_y_degrees -= 360.0f;
 	if (game_state->rotation_y_degrees < 180.0f) game_state->rotation_y_degrees += 360.0f;
 
-	// if (input->keys_down[GAME_KEY_W]) game_state->camera_world_position.z += 1.0f;
-	// if (input->keys_down[GAME_KEY_S]) game_state->camera_world_position.z -= 1.0f;
+	if (input->keys_down[GAME_KEY_W]) game_state->camera_world_position.z += 1.0f;
+	if (input->keys_down[GAME_KEY_S]) game_state->camera_world_position.z -= 1.0f;
 }
