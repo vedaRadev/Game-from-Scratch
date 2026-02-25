@@ -14,9 +14,9 @@
 #include <wayland-client.h>
 #include <xkbcommon/xkbcommon.h> // keyboard maps and whatnot
 #include <xkbcommon/xkbcommon-keysyms.h>
-#include "xdg_shell_client_protocol.h" // for xdg_toplevel and friends
-#include "xdg_decoration_client_protocol.h" // server-side decoration
-#include "wp_viewporter_client_protocol.h" // for separating surface size from buffer size
+#include "wayland/xdg_shell_client_protocol.h" // for xdg_toplevel and friends
+#include "wayland/xdg_decoration_client_protocol.h" // server-side decoration
+#include "wayland/wp_viewporter_client_protocol.h" // for separating surface size from buffer size
 
 // linux/unix stuff
 #include <time.h>

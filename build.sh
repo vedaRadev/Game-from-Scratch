@@ -13,6 +13,7 @@ SCRIPT_DIR_REL=$(dirname "$0")
 cd "$SCRIPT_DIR_REL"
 
 SRC_DIR=$(realpath ./src)
+SRC_WAY_DIR="$SRC_DIR"/wayland
 
 build_game() {
 	echo "Building game..."
@@ -60,8 +61,8 @@ build_game() {
 	rm game.lock
 	echo "game lib lock file deleted"
 
-	gcc "$SRC_DIR"/platform_linux_wayland.c "$SRC_DIR"/xdg_shell_protocol.c "$SRC_DIR"/xdg_decoration_protocol.c \
-		"$SRC_DIR"/wp_viewporter_protocol.c \
+	gcc "$SRC_WAY_DIR"/platform_linux_wayland.c "$SRC_WAY_DIR"/xdg_shell_protocol.c "$SRC_WAY_DIR"/xdg_decoration_protocol.c \
+		"$SRC_WAY_DIR"/wp_viewporter_protocol.c \
 		-o platform_linux_wayland \
 		-ldl -lwayland-client -lxkbcommon \
 		$COMMON_COMPILER_FLAGS $COMMON_LINKER_FLAGS
@@ -70,7 +71,8 @@ build_game() {
 generate_wayland() {
 	echo "Generating wayland protocol files..."
 
-	cd "$SRC_DIR"
+	mkdir -p "$SRC_WAY_DIR"
+	cd "$SRC_WAY_DIR"
 
 	WAYLAND_PROTOCOLS=/usr/share/wayland-protocols
 	XDG_SHELL_PROTOCOL="$WAYLAND_PROTOCOLS"/stable/xdg-shell/xdg-shell.xml
@@ -91,14 +93,7 @@ generate_wayland() {
 clean_wayland() {
 	echo "Cleaning generated wayland files..."
 
-	cd "$SRC_DIR"
-
-	rm xdg_shell_client_protocol.h
-	rm xdg_shell_protocol.c
-	rm xdg_decoration_client_protocol.h
-	rm xdg_decoration_protocol.c
-	rm wp_viewporter_client_protocol.h
-	rm wp_viewporter_protocol.c
+	rm -rf "$SRC_WAY_DIR"
 }
 
 if [ -z "$1" ]; then
