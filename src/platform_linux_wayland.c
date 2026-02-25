@@ -3,24 +3,22 @@
 //   Then we'll be able to re-render immediately in response to toplevel/surface config events.
 //   Though how often will a user e.g. be resizing the window and be like "damn I wish the screen
 //   didn't flicker while doing this :("?
-//
-// - Separate the size of the window surface from the size of the buffer we are rendering to.
-//   Basically, I want to be able to stretch our buffer to fit the window size like we do in the
-//   windows platform layer. Right now the resolution of our offscreen buffer is tied to the window
-//   size! BAD.
 
 #include <xkbcommon/xkbcommon-keysyms.h>
 #define _POSIX_C_SOURCE 200112L
 
+// custom game/engine stuff
 #include "platform.h"
 
-// Wayland stuff
+// wayland stuff
 #include <wayland-client.h>
 #include <xkbcommon/xkbcommon.h> // keyboard maps and whatnot
 #include <xkbcommon/xkbcommon-keysyms.h>
-#include "xdg_shell_client_protocol.h"
+#include "xdg_shell_client_protocol.h" // for xdg_toplevel and friends
 #include "xdg_decoration_client_protocol.h" // server-side decoration
+#include "wp_viewporter_client_protocol.h" // for separating surface size from buffer size
 
+// linux/unix stuff
 #include <time.h>
 #include <sys/timerfd.h>
 #include <sys/poll.h>
@@ -32,6 +30,7 @@
 #include <linux/limits.h>
 #include <errno.h>
 
+// c standard library stuff
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -65,6 +64,9 @@ typedef struct PointerEvent {
 } PointerEvent;
 
 // Wayland Client State
+// TODO(mal): Pass over this struct and update the variable types.
+// e.g. probably want to use uint32_t (or the larger size_t) for things like width and height
+// instead of just the signed "int".
 typedef struct ClientState {
 	/* Globals */
 	struct wl_display *wl_display;
@@ -74,6 +76,7 @@ typedef struct ClientState {
 	struct wl_registry *wl_registry;
 	struct wl_seat *wl_seat;
 	struct zxdg_decoration_manager_v1 *xdg_decoration_manager;
+	struct wp_viewporter *wp_viewporter;
 	/* Objects */
 	struct wl_surface *wl_surface;
 	struct xdg_surface *xdg_surface;
@@ -82,7 +85,9 @@ typedef struct ClientState {
 	struct wl_pointer *wl_pointer;
 	struct wl_buffer **wl_buffers; // nbuffers is buffer count
 	struct zxdg_toplevel_decoration_v1 *xdg_toplevel_decoration;
-	/* State */ struct xkb_state *xkb_state;
+	struct wp_viewport *wp_viewport;
+	/* State */
+	struct xkb_state *xkb_state;
 	struct xkb_context *xkb_context;
 	struct xkb_keymap *xkb_keymap;
 	// NOTE(mal): At the moment we just need GameInput in here to be able to grab keyboard events.
@@ -92,8 +97,10 @@ typedef struct ClientState {
 	char *shm_pool_data;
 	int wl_display_fd;
 	uint32_t last_render_ms;
-	int width;
-	int height;
+	int window_width;
+	int window_height;
+	int buffer_width;
+	int buffer_height;
 	int bytes_per_pixel;
 	int stride;
 	unsigned nbuffers;
@@ -149,13 +156,13 @@ int allocate_shm_file(size_t size) {
 
 const struct wl_buffer_listener wl_buffer_listener;
 void create_buffers(ClientState *state) {
-	state->shm_pool_size = state->height * state->stride * state->nbuffers;
+	state->shm_pool_size = state->buffer_height * state->stride * state->nbuffers;
 	int shm_fd = allocate_shm_file(state->shm_pool_size);
 	struct wl_shm_pool *pool = wl_shm_create_pool(state->shm, shm_fd, state->shm_pool_size);
 	for (int buffer_offset = 0 ; buffer_offset < state->nbuffers; buffer_offset++) {
 		state->wl_buffers[buffer_offset] = wl_shm_pool_create_buffer(
 			pool, buffer_offset,
-			state->width, state->height, state->stride,
+			state->buffer_width, state->buffer_height, state->stride,
 			WL_SHM_FORMAT_XRGB8888
 		);
 		wl_buffer_add_listener(state->wl_buffers[buffer_offset], &wl_buffer_listener, NULL);
@@ -169,6 +176,22 @@ void create_buffers(ClientState *state) {
 	// We can close the shm_fd because we've mapped the memory behind it into our process now.
 	// Besides, the compositor is probably keeping it open anyway.
 	close(shm_fd);
+}
+
+// TODO(mal): Instead of passing in the whole of client state do we want to instead pass in just the
+// parts that we need from it? In this case it would be
+// - compositor
+// - window_width
+// - window_height
+// - wl_surface
+
+// Notify the compositor that our entire surface is opaque so we don't have to worry about trying to
+// update parts of the screen that it's covering.
+void update_window_opaque_region(ClientState *client_state) {
+	struct wl_region *opaque_region = wl_compositor_create_region(client_state->compositor);
+	wl_region_add(opaque_region, 0, 0, client_state->window_width, client_state->window_height);
+	wl_surface_set_opaque_region(client_state->wl_surface, opaque_region);
+	wl_region_destroy(opaque_region);
 }
 
 //////////////////////////////////////////////////
@@ -679,26 +702,34 @@ void xdg_toplevel_configure(
 		return;
 	}
 
-	// TODO(mal): If we have more than one buffer we need to destroy them all here!
-	// Probably in a loop.
+	// NOTE(mal): At the moment I'm just constraining the buffer size to always be 800 pixels wide
+	// and setting the height based on the window's aspect ratio. I will probably want to change
+	// this in the future but I think this is okay for now. My software rendering is super slow and
+	// I wanted to avoid having to draw to larger buffers when the window is resized to be larger,
+	// so I opted to just stretch the buffer across the surface while ensuring the window's and the
+	// buffer's aspect ratios are the same so that the rendered image doesn't distort.
+	// TODO(mal): Maybe make this behavior more formal by removing the buffer_width from ClientState
+	// and creating a constant FIXED_BUFFER_WIDTH global? At the moment whatever the starting
+	// buffer_width is -- that's what the fixed buffer width will be.
 	for (int i = 0; i < state->nbuffers; i++) {
 		wl_buffer_destroy(state->wl_buffers[i]);
 	}
 	munmap(state->shm_pool_data, state->shm_pool_size);
-
-	state->width = width;
-	state->height = height;
-	state->stride = width * state->bytes_per_pixel;
+	// state->width = width;
+	// state->stride = width * state->bytes_per_pixel;
+	float window_aspect_ratio = (float)width / (float)height;
+	state->buffer_height = (int)((float)state->buffer_width / window_aspect_ratio);
+	// FIXME(mal): Do we want to update our buffers here?
 	create_buffers(state);
 
-	GameOffscreenBuffer game_offscreen_buffer;
-	game_offscreen_buffer.memory          = state->shm_pool_data + (state->current_buffer_index * state->stride * state->height);
-	game_offscreen_buffer.width           = state->width;
-	game_offscreen_buffer.height          = state->height;
-	game_offscreen_buffer.bytes_per_pixel = state->bytes_per_pixel;
+	// GameOffscreenBuffer game_offscreen_buffer;
+	// game_offscreen_buffer.memory          = state->shm_pool_data + (state->current_buffer_index * state->stride * state->height);
+	// game_offscreen_buffer.width           = state->width;
+	// game_offscreen_buffer.height          = state->height;
+	// game_offscreen_buffer.bytes_per_pixel = state->bytes_per_pixel;
 
-	// FIXME(mal): Send to game to draw here
-
+	update_window_opaque_region(state);
+	wp_viewport_set_destination(state->wp_viewport, width, height);
 	wl_surface_attach(state->wl_surface, state->wl_buffers[state->current_buffer_index], 0, 0);
 	wl_surface_commit(state->wl_surface);
 }
@@ -742,6 +773,8 @@ void registry_handle_global(
 		wl_seat_add_listener(state->wl_seat, &wl_seat_listener, state);
 	} else if (strcmp(interface, zxdg_decoration_manager_v1_interface.name) == 0) {
 		state->xdg_decoration_manager = wl_registry_bind(wl_registry, name, &zxdg_decoration_manager_v1_interface, 1);
+	} else if (strcmp(interface, wp_viewporter_interface.name) == 0) {
+		state->wp_viewporter = wl_registry_bind(wl_registry, name, &wp_viewporter_interface, 1);
 	}
 }
 
@@ -837,15 +870,17 @@ int main() {
 
 	#define NBUFFERS 1 // just single buffering at the moment
 
-	ClientState client_state     = { 0 };
+	ClientState client_state     = {0};
 	client_state.xkb_context     = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-	client_state.width           = 640;
-	client_state.height          = 480;
+	client_state.buffer_width    = 800;
+	client_state.buffer_height   = 600;
+	client_state.window_width    = client_state.buffer_width;
+	client_state.window_height   = client_state.buffer_height;
 	client_state.bytes_per_pixel = 4;
-	client_state.stride          = client_state.width * client_state.bytes_per_pixel;
+	client_state.stride          = client_state.buffer_width * client_state.bytes_per_pixel;
 	client_state.nbuffers        = NBUFFERS;
 	client_state.wl_buffers      = (struct wl_buffer *[NBUFFERS]){0}; // just store it here on the stack for now
-	client_state.shm_pool_size   = client_state.height * client_state.stride * client_state.nbuffers;
+	client_state.shm_pool_size   = client_state.buffer_height * client_state.stride * client_state.nbuffers;
 
 	client_state.wl_display = wl_display_connect(NULL);
 	ASSERT(client_state.wl_display);
@@ -854,7 +889,13 @@ int main() {
 	wl_registry_add_listener(client_state.wl_registry, &registry_listener, &client_state);
 	wl_display_roundtrip(client_state.wl_display);
 
-	client_state.wl_surface = wl_compositor_create_surface(client_state.compositor);
+	// TODO(mal): More assertions about required bound resources/interfaces?
+	ASSERT(client_state.wp_viewporter);
+	ASSERT(client_state.xdg_decoration_manager);
+
+	client_state.wl_surface  = wl_compositor_create_surface(client_state.compositor);
+	client_state.wp_viewport = wp_viewporter_get_viewport(client_state.wp_viewporter, client_state.wl_surface);
+	wp_viewport_set_destination(client_state.wp_viewport, client_state.window_width, client_state.window_height);
 	client_state.xdg_surface = xdg_wm_base_get_xdg_surface(client_state.xdg_wm_base, client_state.wl_surface);
 	xdg_surface_add_listener(client_state.xdg_surface, &xdg_surface_listener, &client_state);
 	client_state.xdg_toplevel = xdg_surface_get_toplevel(client_state.xdg_surface);
@@ -868,7 +909,6 @@ int main() {
 	// NOTE(mal): Depending on the desktop environment this may or may not be available!
 	// In a real application we should probably have a fallback for drawing our own decorations
 	// (borders, interactive buttons for close/maximize/minimize/etc)
-	ASSERT(client_state.xdg_decoration_manager);
 	client_state.xdg_toplevel_decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
 		client_state.xdg_decoration_manager, client_state.xdg_toplevel
 	);
@@ -877,10 +917,7 @@ int main() {
 
 	// Let's notify the compositor that our entire surface is opaque so it doesn't have to worry
 	// about trying to update parts of windows it's covering.
-	struct wl_region *opaque_region = wl_compositor_create_region(client_state.compositor);
-	wl_region_add(opaque_region, 0, 0, client_state.width, client_state.height);
-	wl_surface_set_opaque_region(client_state.wl_surface, opaque_region);
-	wl_region_destroy(opaque_region);
+	update_window_opaque_region(&client_state);
 
 	// Commit all our initial client_state
 	wl_surface_commit(client_state.wl_surface);
@@ -915,7 +952,7 @@ int main() {
 	// button was previously down and only update input on key transitions.
 	client_state.game_input = &game_input;
 
-	game_code.game_init(&game_memory, client_state.width, client_state.height);
+	game_code.game_init(&game_memory, client_state.buffer_width, client_state.buffer_height);
 
 	#define WAYLAND_DISPLAY_POLL 0
 	#define UPDATE_TIMER_POLL    1
@@ -985,10 +1022,11 @@ int main() {
 			client_state.can_draw = 0;
 
 			GameOffscreenBuffer game_offscreen_buffer;
-			game_offscreen_buffer.memory          = client_state.shm_pool_data + (client_state.current_buffer_index * client_state.stride * client_state.height);
-			game_offscreen_buffer.width           = client_state.width;
-			game_offscreen_buffer.height          = client_state.height;
+			game_offscreen_buffer.memory          = client_state.shm_pool_data + (client_state.current_buffer_index * client_state.stride * client_state.buffer_height);
+			game_offscreen_buffer.width           = client_state.buffer_width;
+			game_offscreen_buffer.height          = client_state.buffer_height;
 			game_offscreen_buffer.bytes_per_pixel = client_state.bytes_per_pixel;
+			game_offscreen_buffer.window_aspect   = (float)client_state.window_width / (float)client_state.window_height;
 
 			game_code.game_render(&game_memory, &game_offscreen_buffer);
 

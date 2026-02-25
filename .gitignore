@@ -4,3 +4,4 @@ compile_flags.txt
 
 # Ignore generated wayland protocols
 /src/xdg*protocol*
+/src/wp_viewporter*protocol*

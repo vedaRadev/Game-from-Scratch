@@ -2,32 +2,6 @@
 // World space: RHS +X Right, +Y Up, +Z Forward
 // OGL-style camera space and projection matrix
 
-// FIXME's and TODO's
-//
-// Start using 4x4 matrices for all transforms instead of having separate 3x3
-// rotations and vec3 translations.
-//
-// Review "Essential Math" 4.3.6 about application of affine transformations.
-// Actually, need to review what the definition of an affine transformation is.
-//
-// Review the logic behind setting up perspective and ndc-to-screen matrices so
-// that I can do it for any arbitrary coordinate system.
-//
-// Move all the matrix transformation setup stuff into initialization and find a
-// way to only recompute when needed (e.g. window size changed).
-// Maybe need to export a new function for the platform layer to load?
-//
-// Fiddle around with using quaternions for rotations and whatnot.
-//
-// Maybe introduce the following convention for all my math functions:
-// - In-place modifications follow naming convention e.g.: vec3_normalized
-// - Functions that do NOT modify in-pace follow convetion: vec3_to_normalized
-// Example:
-// void vec3_normalized(Vec3 *v) { /* ... */ } // in-place modification
-// Vec3 vec3_to_normalized(const Vec3 *v) { /* ... */ } // no modification
-// void vec3_add_vec3(Vec3 *v);
-// void vec3_to_add_vec3(Vec3 a, Vec3 b); Iunno, workshop it
-
 #include <stdint.h>
 #include <math.h>
 #include "platform.h"
@@ -633,8 +607,13 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 	// NOTE(mal): NOT optimized!
 	// TODO(mal): Optimization: only loop over pixels within the AABB of the triangle.
 	uint32_t *pixels = (uint32_t *)offscreen_buffer->memory;
-	// Clear to black
-	memset(pixels, 0, offscreen_buffer->height * offscreen_buffer->width * offscreen_buffer->bytes_per_pixel);
+
+	// TODO(mal): remove, temporary background clear color
+	for (int r = 0; r < offscreen_buffer->height; r++) {
+		for (int c = 0; c < offscreen_buffer->width; c++) {
+			pixels[c + r * offscreen_buffer->width] = 0x00440011;
+		}
+	}
 
 	Vertex *vertices = game_state->square.local_vertices;
 	int num_vertex_indices = 6;
@@ -833,13 +812,16 @@ EXPORT void game_update(GameMemory *memory, GameInput *input) {
 	// Rotate
 	const float rot_speed = 2.0f;
 
-	game_state->rotation_y_degrees += rot_speed;
+	// game_state->rotation_y_degrees += rot_speed;
 
-	// if (input->keys_down[GAME_KEY_J]) game_state->rotation_y_degrees += rot_speed;
-	// if (input->keys_down[GAME_KEY_L]) game_state->rotation_y_degrees -= rot_speed;
+	if (input->keys_down[GAME_KEY_J]) game_state->rotation_y_degrees += rot_speed;
+	if (input->keys_down[GAME_KEY_L]) game_state->rotation_y_degrees -= rot_speed;
+
 	if (game_state->rotation_y_degrees > 180.0f) game_state->rotation_y_degrees -= 360.0f;
 	if (game_state->rotation_y_degrees < 180.0f) game_state->rotation_y_degrees += 360.0f;
 
 	if (input->keys_down[GAME_KEY_W]) game_state->camera_world_position.z += 1.0f;
 	if (input->keys_down[GAME_KEY_S]) game_state->camera_world_position.z -= 1.0f;
+	if (input->keys_down[GAME_KEY_A]) game_state->camera_world_position.x -= 1.0f;
+	if (input->keys_down[GAME_KEY_D]) game_state->camera_world_position.x += 1.0f;
 }

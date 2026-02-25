@@ -3,6 +3,12 @@
 # If this gets reasonably complex, maybe port to a Makefile.
 # Probably will be at that point if I have to keep track of more wayland protocols, or if I also decide to support X11
 
+# TODO(mal): Probably want to refactor this file a little to kind of link all the generated wayland files and whatnot together?
+# We have to make sure that they're all synced up in:
+# - Assembling their object files during build
+# - Generating the actual headers and implementation with wayland scanner during waygen
+# - Removing all of them during wayclean
+
 SCRIPT_DIR_REL=$(dirname "$0")
 cd "$SCRIPT_DIR_REL"
 
@@ -55,6 +61,7 @@ build_game() {
 	echo "game lib lock file deleted"
 
 	gcc "$SRC_DIR"/platform_linux_wayland.c "$SRC_DIR"/xdg_shell_protocol.c "$SRC_DIR"/xdg_decoration_protocol.c \
+		"$SRC_DIR"/wp_viewporter_protocol.c \
 		-o platform_linux_wayland \
 		-ldl -lwayland-client -lxkbcommon \
 		$COMMON_COMPILER_FLAGS $COMMON_LINKER_FLAGS
@@ -68,11 +75,17 @@ generate_wayland() {
 	WAYLAND_PROTOCOLS=/usr/share/wayland-protocols
 	XDG_SHELL_PROTOCOL="$WAYLAND_PROTOCOLS"/stable/xdg-shell/xdg-shell.xml
 	XDG_DECORATION_PROTOCOL="$WAYLAND_PROTOCOLS"/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml
+	WP_VIEWPORTER_PROTOCOL="$WAYLAND_PROTOCOLS"/stable/viewporter/viewporter.xml
 
 	wayland-scanner client-header "$XDG_SHELL_PROTOCOL" xdg_shell_client_protocol.h
 	wayland-scanner private-code  "$XDG_SHELL_PROTOCOL" xdg_shell_protocol.c
+
 	wayland-scanner client-header "$XDG_DECORATION_PROTOCOL" xdg_decoration_client_protocol.h
 	wayland-scanner private-code  "$XDG_DECORATION_PROTOCOL" xdg_decoration_protocol.c
+
+	wayland-scanner client-header "$WP_VIEWPORTER_PROTOCOL" wp_viewporter_client_protocol.h
+	wayland-scanner private-code  "$WP_VIEWPORTER_PROTOCOL" wp_viewporter_protocol.c
+
 }
 
 clean_wayland() {
@@ -84,6 +97,8 @@ clean_wayland() {
 	rm xdg_shell_protocol.c
 	rm xdg_decoration_client_protocol.h
 	rm xdg_decoration_protocol.c
+	rm wp_viewporter_client_protocol.h
+	rm wp_viewporter_protocol.c
 }
 
 if [ -z "$1" ]; then
