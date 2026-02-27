@@ -316,21 +316,22 @@ Mat3x3 look_at(Vec3 from, Vec3 to, Vec3 up) {
 	return result;
 }
 
-typedef struct Point { int x; int y; } Point;
-size_t bresenham(Point *points, size_t points_len, int x0, int y0, int x1, int y1) {
+// Draw a line using bresenham's line drawing algorithm
+// NOTE(mal): This does NOT clip lines to the bounds of the pixel buffer. Caller beware!
+void draw_line_2d(uint32_t *pixels, int width, int height, Vec3 a, Vec3 b) {
+	int x0 = a.x, x1 = b.x;
+	int y0 = a.y, y1 = b.y;
+
 	int dx = abs(x1 - x0);
 	int dy = -abs(y1 - y0);
 	int sx = x0 < x1 ? 1 : -1;
 	int sy = y0 < y1 ? 1 : -1;
 	int err = dx + dy;
 
-	size_t point_index = 0;
-	size_t generated = 0;
-	while (point_index < points_len) {
-		Point p = { .x = x0, .y = y0 };
-		points[point_index] = p;
-		point_index++;
-		generated++;
+	// FIXME(mal): Sometimes an infinite loop happens here
+	while (true) {
+		if (x0 > 0 && x0 < width && y0 > 0 && y0 < height)
+			pixels[x0 + y0 * width] = -1;
 
 		if (x0 == x1 && y0 == y1) {
 			break;
@@ -346,8 +347,6 @@ size_t bresenham(Point *points, size_t points_len, int x0, int y0, int x1, int y
 			y0 += sy;
 		}
 	}
-
-	return generated;
 }
 
 typedef struct Vertex {
@@ -385,6 +384,7 @@ typedef struct GameState {
 	unsigned texture_width;
 	unsigned texture_height;
 	uint32_t *texture_pixels;
+	int render_wireframe;
 } GameState;
 
 // http://www.paulbourke.net/dataformats/tga/
@@ -432,21 +432,25 @@ EXPORT void game_init(GameMemory *memory, int initial_width, int initial_height)
 	// 0: Square bottom left
 	game_state->square.local_vertices[0] = (Vertex){
 		.position = { .x = -1, .y = -1 },
+		.color = -1,
 		.tx_u = 0.0f, .tx_v = 1.0f,
 	};
 	// 1: Square top left
 	game_state->square.local_vertices[1] = (Vertex){
 		.position = { .x = -1, .y = 1 },
+		.color = -1,
 		.tx_u = 0.0f, .tx_v = 0.0f,
 	};
 	// 2: Square bottom right
 	game_state->square.local_vertices[2] = (Vertex){
 		.position = { .x = 1, .y = -1 },
+		.color = -1,
 		.tx_u = 1.0f, .tx_v = 1.0f,
 	};
 	// 3: Square top right
 	game_state->square.local_vertices[3] = (Vertex){
 		.position = { .x = 1, .y = 1 },
+		.color = -1,
 		.tx_u = 1.0f, .tx_v = 0.0f,
 	};
 
@@ -473,6 +477,8 @@ EXPORT void game_init(GameMemory *memory, int initial_width, int initial_height)
 	game_state->texture_height = tga_header->height;
 	game_state->texture_width  = tga_header->width;
 	game_state->texture_pixels = (uint32_t *)(tga_data + sizeof(TGA_Header));
+
+	game_state->render_wireframe = 0;
 }
 
 EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffer) {
@@ -669,8 +675,6 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 		// we're using directly?
 		Vertex vs[3] = { v2, v1, v0 };
 		float reciprocal_depth_2[3] = { reciprocal_depth[2], reciprocal_depth[1], reciprocal_depth[0] };
-		float area = edge_function(vs[0].position, vs[1].position, vs[2].position);
-		float reciprocal_area = 1 / area;
 		// Compute the AABB of the triangle so that we don't have to loop over the entire buffer
 		// every time regardless of the size of the triangle.
 		// TODO(mal): Maybe create to_vec3_max(Vec3 a, Vec3 b) and to_vec3_min(Vec3 a, Vec3 b)
@@ -697,6 +701,15 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 		ymax = ymax > offscreen_buffer->height ? offscreen_buffer->height : ymax;
 		xmin = xmin < 0 ? 0 : xmin;
 		xmax = xmax > offscreen_buffer->width ? offscreen_buffer->width : xmax;
+
+		// NOTE(mal): Does NOT account for winding order so at the moment we always render even if
+		// the triange is facing away from us.
+		if (game_state->render_wireframe) {
+			draw_line_2d(pixels, offscreen_buffer->width, offscreen_buffer->height, vs[0].position, vs[1].position);
+			draw_line_2d(pixels, offscreen_buffer->width, offscreen_buffer->height, vs[1].position, vs[2].position);
+			draw_line_2d(pixels, offscreen_buffer->width, offscreen_buffer->height, vs[2].position, vs[0].position);
+			continue;
+		}
 
 		// NOTE(mal): Avoiding per-pixel edge function computation. This should be possible because the
 		// edge function is linear. Thus,
@@ -729,11 +742,18 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 		float d_w1_row = (vs[2].position.x - vs[0].position.x);
 		float d_w2_row = (vs[0].position.x - vs[1].position.x);
 
+		float area = edge_function(vs[0].position, vs[1].position, vs[2].position);
+		float reciprocal_area = 1.0f / area;
+
 		for (int row = ymin; row < ymax; row++) {
 			float w0 = w0_row;
 			float w1 = w1_row;
 			float w2 = w2_row;
 			for (int col = xmin; col < xmax; col++) {
+				float w0_percent = w0 * reciprocal_area;
+				float w1_percent = w1 * reciprocal_area;
+				float w2_percent = w2 * reciprocal_area;
+
 				if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
 					// HACK(mal): poor man's clipping to avoid crashing
 					// TODO(mal): Get rid of this once clipping is actually added.
@@ -758,22 +778,33 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 					float f1 = w1 * reciprocal_depth_2[1];
 					float f2 = w2 * reciprocal_depth_2[2];
 					float perspective_reciprocal_area = 1.0f / (f0 + f1 + f2);
-					float tx_u = (f0 * vs[0].tx_u + f1 * vs[1].tx_u + f2 * vs[2].tx_u) * perspective_reciprocal_area;
-					float tx_v = (f0 * vs[0].tx_v + f1 * vs[1].tx_v + f2 * vs[2].tx_v) * perspective_reciprocal_area;
-					
-					unsigned tx_x = (unsigned)(tx_u * game_state->texture_width);
-					unsigned tx_y = (unsigned)(tx_v * game_state->texture_height);
-					unsigned texel_index = tx_x + tx_y * game_state->texture_width;
 
-					// FIXME(mal): Need to detect machine's endianness and extract the bits
-					// properly. Check the 32-bit color format of TGA (or any other texture
-					// file we may load). I believe it's BGRA.
-					uint32_t texel_tga_color = game_state->texture_pixels[texel_index];
-					uint8_t  texel_red       = (texel_tga_color & 0x00FF0000) >> 16;
-					uint8_t  texel_green     = (texel_tga_color & 0x0000FF00) >> 8;
-					uint8_t  texel_blue      = texel_tga_color & 0x000000FF;
-					uint32_t texel_color     = (texel_red << 16) | (texel_green << 8) | texel_blue;
-					pixels[col + row * offscreen_buffer->width] = texel_color;
+					// // TEXTURING
+					// float tx_u = (f0 * vs[0].tx_u + f1 * vs[1].tx_u + f2 * vs[2].tx_u) * perspective_reciprocal_area;
+					// float tx_v = (f0 * vs[0].tx_v + f1 * vs[1].tx_v + f2 * vs[2].tx_v) * perspective_reciprocal_area;
+					// unsigned tx_x = (unsigned)(tx_u * game_state->texture_width);
+					// unsigned tx_y = (unsigned)(tx_v * game_state->texture_height);
+					// unsigned texel_index = tx_x + tx_y * game_state->texture_width;
+					// // FIXME(mal): Need to detect machine's endianness and extract the bits
+					// // properly. Check the 32-bit color format of TGA (or any other texture
+					// // file we may load). I believe it's BGRA.
+					// uint32_t texel_tga_color = game_state->texture_pixels[texel_index];
+					// uint8_t  texel_red       = (texel_tga_color & 0x00FF0000) >> 16;
+					// uint8_t  texel_green     = (texel_tga_color & 0x0000FF00) >> 8;
+					// uint8_t  texel_blue      = texel_tga_color & 0x000000FF;
+					// uint32_t texel_color     = (texel_red << 16) | (texel_green << 8) | texel_blue;
+					// pixels[col + row * offscreen_buffer->width] = texel_color;
+
+					#define U32_R8(x) (((x) & (0xFF << 16)) >> 16)
+					#define U32_G8(x) (((x) & (0xFF << 8)) >> 8)
+					#define U32_B8(x) ((x) & 0xFF)
+					uint8_t color_red   = (f0 * U32_R8(vs[0].color) + f1 * U32_R8(vs[1].color) + f2 * U32_R8(vs[2].color)) * perspective_reciprocal_area;
+					uint8_t color_green = (f0 * U32_G8(vs[0].color) + f1 * U32_G8(vs[1].color) + f2 * U32_G8(vs[2].color)) * perspective_reciprocal_area;
+					uint8_t color_blue  = (f0 * U32_B8(vs[0].color) + f1 * U32_B8(vs[1].color) + f2 * U32_B8(vs[2].color)) * perspective_reciprocal_area;
+					pixels[col + row * offscreen_buffer->width] =
+						color_red << 16
+						| color_green << 8
+						| color_blue;
 				}
 
 				w0 += d_w0_col;
@@ -824,4 +855,6 @@ EXPORT void game_update(GameMemory *memory, GameInput *input) {
 	if (input->keys_down[GAME_KEY_S]) game_state->camera_world_position.z -= 1.0f;
 	if (input->keys_down[GAME_KEY_A]) game_state->camera_world_position.x -= 1.0f;
 	if (input->keys_down[GAME_KEY_D]) game_state->camera_world_position.x += 1.0f;
+
+	if (input->keys_down[GAME_KEY_F1]) game_state->render_wireframe = !game_state->render_wireframe;
 }
