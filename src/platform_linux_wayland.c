@@ -1026,7 +1026,6 @@ int main() {
 			game_offscreen_buffer.width           = client_state.buffer_width;
 			game_offscreen_buffer.height          = client_state.buffer_height;
 			game_offscreen_buffer.bytes_per_pixel = client_state.bytes_per_pixel;
-			game_offscreen_buffer.window_aspect   = (float)client_state.window_width / (float)client_state.window_height;
 
 			game_code.game_render(&game_memory, &game_offscreen_buffer);
 

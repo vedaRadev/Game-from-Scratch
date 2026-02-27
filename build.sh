@@ -61,8 +61,8 @@ build_game() {
 	rm game.lock
 	echo "game lib lock file deleted"
 
-	gcc "$SRC_WAY_DIR"/platform_linux_wayland.c "$SRC_WAY_DIR"/xdg_shell_protocol.c "$SRC_WAY_DIR"/xdg_decoration_protocol.c \
-		"$SRC_WAY_DIR"/wp_viewporter_protocol.c \
+	gcc "$SRC_DIR"/platform_linux_wayland.c\
+		"$SRC_WAY_DIR"/xdg_shell_protocol.c "$SRC_WAY_DIR"/xdg_decoration_protocol.c "$SRC_WAY_DIR"/wp_viewporter_protocol.c \
 		-o platform_linux_wayland \
 		-ldl -lwayland-client -lxkbcommon \
 		$COMMON_COMPILER_FLAGS $COMMON_LINKER_FLAGS
