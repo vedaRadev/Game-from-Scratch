@@ -845,16 +845,17 @@ EXPORT void game_update(GameMemory *memory, GameInput *input) {
 
 	// game_state->rotation_y_degrees += rot_speed;
 
-	if (input->keys_down[GAME_KEY_J]) game_state->rotation_y_degrees += rot_speed;
-	if (input->keys_down[GAME_KEY_L]) game_state->rotation_y_degrees -= rot_speed;
+	if (input->keys[GAME_KEY_J].is_down) game_state->rotation_y_degrees += rot_speed;
+	if (input->keys[GAME_KEY_L].is_down) game_state->rotation_y_degrees -= rot_speed;
 
 	if (game_state->rotation_y_degrees > 180.0f) game_state->rotation_y_degrees -= 360.0f;
 	if (game_state->rotation_y_degrees < 180.0f) game_state->rotation_y_degrees += 360.0f;
 
-	if (input->keys_down[GAME_KEY_W]) game_state->camera_world_position.z += 1.0f;
-	if (input->keys_down[GAME_KEY_S]) game_state->camera_world_position.z -= 1.0f;
-	if (input->keys_down[GAME_KEY_A]) game_state->camera_world_position.x -= 1.0f;
-	if (input->keys_down[GAME_KEY_D]) game_state->camera_world_position.x += 1.0f;
+	if (input->keys[GAME_KEY_W].is_down) game_state->camera_world_position.z += 1.0f;
+	if (input->keys[GAME_KEY_S].is_down) game_state->camera_world_position.z -= 1.0f;
+	if (input->keys[GAME_KEY_A].is_down) game_state->camera_world_position.x -= 1.0f;
+	if (input->keys[GAME_KEY_D].is_down) game_state->camera_world_position.x += 1.0f;
 
-	if (input->keys_down[GAME_KEY_F1]) game_state->render_wireframe = !game_state->render_wireframe;
+	if (input->keys[GAME_KEY_F1].is_down && !input->keys[GAME_KEY_F1].was_down)
+		game_state->render_wireframe = !game_state->render_wireframe;
 }

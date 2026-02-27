@@ -599,11 +599,12 @@ void wl_keyboard_key(
 	uint32_t serial,
 	uint32_t time,
 	uint32_t key,
-	uint32_t state
+	uint32_t key_state
 )
 {
-	// Note about XKB keycodes: https://gist.github.com/axelkar/dbdbfe7e61baf52c8b0cf1be423a14c1
+	if (key_state == WL_KEYBOARD_KEY_STATE_REPEATED) return;
 
+	// Note about XKB keycodes: https://gist.github.com/axelkar/dbdbfe7e61baf52c8b0cf1be423a14c1
 	ClientState *client_state = data;
 	// Remember that the scancode sent from this event is the Linux evdev scancode. To translate to
 	// an XKB scancode you have to add 8 to the evdev scancode.
@@ -612,9 +613,7 @@ void wl_keyboard_key(
 	xkb_keysym_t sym = xkb_state_key_get_one_sym(client_state->xkb_state, keycode);
 	GameKey game_key = xkb_keysym_to_game_key(sym);
 	if (game_key != GAME_KEY_UNKNOWN) {
-		// TODO(mal): Change to b8 or something (bool8_t?) once I add those
-		bool is_down = state == WL_KEYBOARD_KEY_STATE_PRESSED || state == WL_KEYBOARD_KEY_STATE_REPEATED;
-		client_state->game_input->keys_down[game_key] = is_down;
+		client_state->game_input->keys[game_key].is_down = key_state == WL_KEYBOARD_KEY_STATE_PRESSED;
 	}
 }
 
@@ -1014,6 +1013,10 @@ int main() {
 			read(pollfds[UPDATE_TIMER_POLL].fd, &expirations, sizeof(expirations));
 
 			game_code.game_update(&game_memory, &game_input);
+
+			for (int i = 0; i < NUM_GAME_KEYS; i++) {
+				game_input.keys[i].was_down = game_input.keys[i].is_down;
+			}
 
 			needs_draw = 1;
 		}

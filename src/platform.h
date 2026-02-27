@@ -55,6 +55,9 @@ typedef struct GameOffscreenBuffer {
 // NOTE(mal): These codes are based on win32 virtual keycodes
 // TODO(mal): add numpad keys?
 // TODO(mal): add home, end, insert, page up/down, keys?
+// TODO(mal): Maybe stop basing on win32 key codes? Instead, just have the GameKey values increase
+// monotonically from 0 or something? Then I could compress the array we actually send as our
+// keyboard input to only contain the necessary elements.
 typedef enum GameKey {
 	GAME_KEY_UNKNOWN = -1,
 
@@ -153,8 +156,15 @@ typedef enum GameKey {
     GAME_KEY_ENTER     = 0x0D,
 } GameKey;
 
+// TODO(mal): Eventually slam this down to just be bitflags in an n-bit value?
+typedef struct ButtonState {
+	char is_down;  // Is the key down this update tick?
+	char was_down; // Was the key down last update tick?
+} ButtonState;
+
+#define NUM_GAME_KEYS 256
 typedef struct GameInput {
-    bool keys_down[256];
+    ButtonState keys[NUM_GAME_KEYS];
     // TODO(mal): mouse input
 } GameInput;
 
