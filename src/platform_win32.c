@@ -120,6 +120,29 @@ inline float get_seconds_elapsed(
     return result;
 }
 
+char *debug_windows_read_entire_file(char *file_path) {
+	HANDLE file_handle = CreateFile(file_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	LARGE_INTEGER file_size_struct;
+	if (!GetFileSizeEx(file_handle, &file_size_struct)) return NULL;
+	// NOTE(mal): Assuming at the moment that we won't ever be debug loading any files of a size
+	// that would warrant the use of the QuadPart (64-bit integer). If we end up needing to do that
+	// then we will have to read the file in chunks in a loop.
+	ASSERT(file_size_struct.HighPart == 0);
+	DWORD file_size = file_size_struct.LowPart;
+	char *file_data = VirtualAlloc(NULL, file_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	if (!file_data) return NULL;
+	DWORD bytes_read = 0;
+	if (!ReadFile(file_handle, file_data, file_size, &bytes_read, NULL) || bytes_read != file_size) {
+		VirtualFree(file_data, file_size, MEM_RELEASE);
+	}
+
+	return file_data;
+}
+
+void debug_windows_free_entire_file(char *file_data, size_t file_len) {
+	VirtualFree(file_data, file_len, MEM_RELEASE);
+}
+
 LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM w_param, LPARAM l_param) {
     LRESULT result = 0;
 
@@ -216,6 +239,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
     );
     // TODO(mal): check if the game dll exists, abort if not?
 
+	SetCurrentDirectoryW(base_dir_path);
+
     GameCode game_code = load_game_code(game_dll_path, game_temp_dll_path, game_dll_lock_path);
 
     // TODO(mal): check if there are different options we want to use for anything
@@ -275,6 +300,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
         MessageBoxW(NULL, L"Failed to allocate memory for game", L"Error", MB_OK);
         return 1;
     }
+	game_memory.debug_platform_read_entire_file = debug_windows_read_entire_file;
+	game_memory.debug_platform_free_entire_file = debug_windows_free_entire_file;
 
     game_code.game_init(&game_memory, offscreen_buffer.width, offscreen_buffer.height);
 
@@ -325,6 +352,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
                 case WM_KEYDOWN:
                     bool was_down = (window_message.lParam & (1 << 30)) != 0;
                     bool is_down = (window_message.lParam & (1 << 31)) == 0;
+					// We only care about key press and key release, not key repeat
                     if (is_down != was_down) {
                         uint32_t virtual_key_code = (uint32_t)window_message.wParam;
                         bool is_alt_pressed = (window_message.lParam & (1 << 29));
@@ -356,7 +384,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
                             game_key = is_extended_key ? GAME_KEY_CTRL_R : GAME_KEY_CTRL_L;
                         }
 
-                        game_input.keys_down[game_key] = is_down;
+						// NOTE(mal): We are NOT setting was_down here for our button state using
+						// the was_down we get from the window message. That only seems to kick in
+						// after some delay of holding the key down when windows key repeat kicks
+						// in. We're actually just going to iterate our keys after every update and
+						// update our button state was_down's there.
+                        game_input.keys[game_key].is_down = is_down;
                     }
 
                     break;
@@ -369,6 +402,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, 
         }
 
         game_code.game_update(&game_memory, &game_input);
+		
+		for (int i = 0; i < NUM_GAME_KEYS; i++) {
+			game_input.keys[i].was_down = game_input.keys[i].is_down;
+		}
 
         GameOffscreenBuffer buf;
         buf.memory = offscreen_buffer.memory;

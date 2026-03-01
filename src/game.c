@@ -779,32 +779,33 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 					float f2 = w2 * reciprocal_depth_2[2];
 					float perspective_reciprocal_area = 1.0f / (f0 + f1 + f2);
 
-					// // TEXTURING
-					// float tx_u = (f0 * vs[0].tx_u + f1 * vs[1].tx_u + f2 * vs[2].tx_u) * perspective_reciprocal_area;
-					// float tx_v = (f0 * vs[0].tx_v + f1 * vs[1].tx_v + f2 * vs[2].tx_v) * perspective_reciprocal_area;
-					// unsigned tx_x = (unsigned)(tx_u * game_state->texture_width);
-					// unsigned tx_y = (unsigned)(tx_v * game_state->texture_height);
-					// unsigned texel_index = tx_x + tx_y * game_state->texture_width;
-					// // FIXME(mal): Need to detect machine's endianness and extract the bits
-					// // properly. Check the 32-bit color format of TGA (or any other texture
-					// // file we may load). I believe it's BGRA.
-					// uint32_t texel_tga_color = game_state->texture_pixels[texel_index];
-					// uint8_t  texel_red       = (texel_tga_color & 0x00FF0000) >> 16;
-					// uint8_t  texel_green     = (texel_tga_color & 0x0000FF00) >> 8;
-					// uint8_t  texel_blue      = texel_tga_color & 0x000000FF;
-					// uint32_t texel_color     = (texel_red << 16) | (texel_green << 8) | texel_blue;
-					// pixels[col + row * offscreen_buffer->width] = texel_color;
+					// TEXTURING
+					float tx_u = (f0 * vs[0].tx_u + f1 * vs[1].tx_u + f2 * vs[2].tx_u) * perspective_reciprocal_area;
+					float tx_v = (f0 * vs[0].tx_v + f1 * vs[1].tx_v + f2 * vs[2].tx_v) * perspective_reciprocal_area;
+					unsigned tx_x = (unsigned)(tx_u * game_state->texture_width);
+					unsigned tx_y = (unsigned)(tx_v * game_state->texture_height);
+					unsigned texel_index = tx_x + tx_y * game_state->texture_width;
+					// FIXME(mal): Need to detect machine's endianness and extract the bits
+					// properly. Check the 32-bit color format of TGA (or any other texture
+					// file we may load). I believe it's BGRA.
+					uint32_t texel_tga_color = game_state->texture_pixels[texel_index];
+					uint8_t  texel_red       = (texel_tga_color & 0x00FF0000) >> 16;
+					uint8_t  texel_green     = (texel_tga_color & 0x0000FF00) >> 8;
+					uint8_t  texel_blue      = texel_tga_color & 0x000000FF;
+					uint32_t texel_color     = (texel_red << 16) | (texel_green << 8) | texel_blue;
+					pixels[col + row * offscreen_buffer->width] = texel_color;
 
-					#define U32_R8(x) (((x) & (0xFF << 16)) >> 16)
-					#define U32_G8(x) (((x) & (0xFF << 8)) >> 8)
-					#define U32_B8(x) ((x) & 0xFF)
-					uint8_t color_red   = (f0 * U32_R8(vs[0].color) + f1 * U32_R8(vs[1].color) + f2 * U32_R8(vs[2].color)) * perspective_reciprocal_area;
-					uint8_t color_green = (f0 * U32_G8(vs[0].color) + f1 * U32_G8(vs[1].color) + f2 * U32_G8(vs[2].color)) * perspective_reciprocal_area;
-					uint8_t color_blue  = (f0 * U32_B8(vs[0].color) + f1 * U32_B8(vs[1].color) + f2 * U32_B8(vs[2].color)) * perspective_reciprocal_area;
-					pixels[col + row * offscreen_buffer->width] =
-						color_red << 16
-						| color_green << 8
-						| color_blue;
+					// #define U32_R8(x) (((x) & (0xFF << 16)) >> 16)
+					// #define U32_G8(x) (((x) & (0xFF << 8)) >> 8)
+					// #define U32_B8(x) ((x) & 0xFF)
+					// uint8_t color_red   = (f0 * U32_R8(vs[0].color) + f1 * U32_R8(vs[1].color) + f2 * U32_R8(vs[2].color)) * perspective_reciprocal_area;
+					// uint8_t color_green = (f0 * U32_G8(vs[0].color) + f1 * U32_G8(vs[1].color) + f2 * U32_G8(vs[2].color)) * perspective_reciprocal_area;
+					// uint8_t color_blue  = (f0 * U32_B8(vs[0].color) + f1 * U32_B8(vs[1].color) + f2 * U32_B8(vs[2].color)) * perspective_reciprocal_area;
+					// pixels[col + row * offscreen_buffer->width] =
+					// 	color_red << 16
+					// 	| color_green << 8
+					// 	| color_blue;
+
 				}
 
 				w0 += d_w0_col;

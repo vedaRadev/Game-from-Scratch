@@ -15,6 +15,10 @@
 // TODO(mal): Instead of this, maybe make types b8, b16, b32, b64 etc.
 typedef enum { false, true } bool;
 
+// TODO(mal): Have some cross platform printing solution in case I want to get rid of the c
+// standard library? Might have to have separate assertion definitions for platform and game...
+// Could then add some sort of printing function to the GameMemory struct.
+
 // TODO(mal): Move assertion macros into their own file?
 // TODO(mal): This assumes that we're running while hooked up to a debugger and can catch a crash.
 // See GEA 3rd p126 for details on a perhaps more-proper assertion implementation. Probably want to
