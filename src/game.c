@@ -1,4 +1,4 @@
-// NOTE(mal) ON 3D COORDINATE SYSTEM:
+// NOTE(mal) ON 2D COORDINATE SYSTEM:
 // World space: RHS +X Right, +Y Up, +Z Forward
 // OGL-style camera space and projection matrix
 
@@ -237,6 +237,22 @@ typedef struct Mat4x4 {
 	};
 } Mat4x4;
 
+inline Mat4x4 mat4x4_identity() {
+	Mat4x4 result = {};
+	result.rows[0][0] = 1;
+	result.rows[1][1] = 1;
+	result.rows[2][2] = 1;
+	result.rows[3][3] = 1;
+	return result;
+}
+
+void mat4x4_scale(Mat4x4 *m, float scale) {
+	m->rows[0][0] *= scale;
+	m->rows[1][1] *= scale;
+	m->rows[2][2] *= scale;
+	m->rows[3][3] *= scale;
+}
+
 // TODO(mal): should this be in-place?
 // Computes the tranpose of the given matrix.
 Mat4x4 mat4x4_transpose(Mat4x4 m) {
@@ -318,10 +334,7 @@ Mat3x3 look_at(Vec3 from, Vec3 to, Vec3 up) {
 
 // Draw a line using bresenham's line drawing algorithm
 // NOTE(mal): This does NOT clip lines to the bounds of the pixel buffer. Caller beware!
-void draw_line_2d(uint32_t *pixels, int width, int height, Vec3 a, Vec3 b) {
-	int x0 = a.x, x1 = b.x;
-	int y0 = a.y, y1 = b.y;
-
+void draw_line_2d(uint32_t *pixels, int width, int height, int x0, int y0, int x1, int y1) {
 	int dx = abs(x1 - x0);
 	int dy = -abs(y1 - y0);
 	int sx = x0 < x1 ? 1 : -1;
@@ -350,7 +363,7 @@ void draw_line_2d(uint32_t *pixels, int width, int height, Vec3 a, Vec3 b) {
 }
 
 typedef struct Vertex {
-	Vec3 position;
+	Vec4 position;
 	uint32_t color;   // argb
 	float tx_u, tx_v; // texture coordinates
 } Vertex;
@@ -415,12 +428,14 @@ typedef struct TGA_Header {
 // The value returned by this function is the same as the 2D "cross product" of
 // vectors (p - v0) and (v1 - v0) and the determinant of the 2D matrix formed by
 // the same two vectors.
-
-// NOTE(mal): Vec3 but we're only checking x and y coords. Maybe it's best to just pass the
-// components in directlry?
-float edge_function(Vec3 v0, Vec3 v1, Vec3 p) {
-	float result = (p.x - v0.x) * (v1.y - v0.y) - (p.y - v0.y) * (v1.x - v0.x);
+float edge_function(float v0x, float v0y, float v1x, float v1y, float px, float py) {
+	float result = (px - v0x) * (v1y - v0y) - (py - v0y) * (v1x - v0x);
 	return result;
+}
+
+// TODO(mal): Finish implementation
+void clip_sutherland_hodgeman(Vertex *input, size_t input_len, Vertex *output, size_t *output_len) {
+	ASSERT(input_len == 3 || input_len == 4);
 }
 
 EXPORT void game_init(GameMemory *memory, int initial_width, int initial_height) {
@@ -631,19 +646,31 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 		Vertex v1 = vertices[game_state->square.vertex_list[vertex_list_offset + 1]];
 		Vertex v2 = vertices[game_state->square.vertex_list[vertex_list_offset + 2]];
 
+		// FIXME(mal): Just construct/use/whatever a 4x4 transformation matrix for local_to_world
+
 		// Scaling
-		v0.position = mult_vec3_scalar(v0.position, game_state->square.scale);
-		v1.position = mult_vec3_scalar(v1.position, game_state->square.scale);
-		v2.position = mult_vec3_scalar(v2.position, game_state->square.scale);
-		// Rotating
-		Mat3x3 triangle_y_rot = mat3x3_create_rotation_y(DEGREES_TO_RADIANS(game_state->rotation_y_degrees));
-		v0.position = mult_mat3x3_vec3(triangle_y_rot, v0.position);
-		v1.position = mult_mat3x3_vec3(triangle_y_rot, v1.position);
-		v2.position = mult_mat3x3_vec3(triangle_y_rot, v2.position);
+		for (int i = 0; i < 3; i++) v0.position.elements[i] *= game_state->square.scale;
+		for (int i = 0; i < 3; i++) v1.position.elements[i] *= game_state->square.scale;
+		for (int i = 0; i < 3; i++) v2.position.elements[i] *= game_state->square.scale;
+		// Rotating about Y axis
+		{
+			float x, z;
+			float r = DEGREES_TO_RADIANS(game_state->rotation_y_degrees);
+			float sin_r = sin(r), cos_r = cos(r);
+			x = v0.position.x, z = v0.position.z;
+			v0.position.x = z*sin_r + x*cos_r;
+			v0.position.z = z*cos_r - x*sin_r;
+			x = v1.position.x, z = v1.position.z;
+			v1.position.x = z*sin_r + x*cos_r;
+			v1.position.z = z*cos_r - x*sin_r;
+			x = v2.position.x, z = v2.position.z;
+			v2.position.x = z*sin_r + x*cos_r;
+			v2.position.z = z*cos_r - x*sin_r;
+		}
 		// Translating
-		v0.position = vec3_add(v0.position, game_state->square.world_position);
-		v1.position = vec3_add(v1.position, game_state->square.world_position);
-		v2.position = vec3_add(v2.position, game_state->square.world_position);
+		for (int i = 0; i < 3; i++) v0.position.elements[i] += game_state->square.world_position.elements[i];
+		for (int i = 0; i < 3; i++) v1.position.elements[i] += game_state->square.world_position.elements[i];
+		for (int i = 0; i < 3; i++) v2.position.elements[i] += game_state->square.world_position.elements[i];
 
 		Vertex *verts[3] = { &v0, &v1, &v2 };
 		float reciprocal_depth[3];
@@ -655,8 +682,27 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 			// should be in a space which is our viewing frustum transformed into a unit cube.
 			// From RTR 4.7.2 p98: "The perspective transform in any form followed by clipping and
 			// homogenization (division by w) results in normalized device coordinates.
-			// TODO(mal): Clip, then perform perspective divide?
-			// NOTE(mal): After perspective projection and befoe perspective divide, the w
+
+			//////////////////////////////
+			// BEGIN CLIPPING
+			//////////////////////////////
+
+			// TODO(mal): Clipping optimization -- check triangle bounding box against frustum
+			// planes and only clip if straddling.
+
+			// // NOTE(mal): See "Essential Math" 7.4.3 and 7.4.4 about clipping
+			// float signed_dist_to_pos_x_plane = perspective_vert.w - perspective_vert.x;
+			// float signed_dist_to_neg_x_plane = perspective_vert.w + perspective_vert.x;
+			// float signed_dist_to_pos_y_plane = perspective_vert.w - perspective_vert.y;
+			// float signed_dist_to_neg_y_plane = perspective_vert.w + perspective_vert.y;
+			// float signed_dist_to_pos_z_plane = perspective_vert.w - perspective_vert.z;
+			// float signed_dist_to_neg_z_plane = perspective_vert.w + perspective_vert.z;
+
+			//////////////////////////////
+			// END CLIPPING
+			//////////////////////////////
+
+			// NOTE(mal): After perspective projection and before perspective divide, the w
 			// component IS our view-space Z (depth) coordinate!
 			float reciprocal_w = 1.0f / perspective_vert.w;
 			reciprocal_depth[i] = reciprocal_w;
@@ -665,8 +711,28 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 			perspective_vert.z *= reciprocal_w;
 			perspective_vert.w *= reciprocal_w;
 			Vec4 screen_space_vert = mult_mat4x4_vec4(ndc_to_screen, perspective_vert);
-			verts[i]->position = (Vec3){ .x = screen_space_vert.x, .y = screen_space_vert.y, .z = screen_space_vert.z };
+			verts[i]->position = screen_space_vert;
+			// verts[i]->position = (Vec4){ .x = screen_space_vert.x, .y = screen_space_vert.y, .z = screen_space_vert.z };
 		}
+
+		// Vertex clip_in [4] = { v0, v1, v2 };
+		// size_t clip_in_count = 3;
+		// Vertex clip_out[4];
+		// size_t clip_out_count;
+		// // clip against the six frustum planes
+		
+		// // clip +x
+		// clip_sutherland_hodgeman(clip_in, clip_in_count, clip_out, &clip_out_count);
+		// // clip -x
+		// clip_sutherland_hodgeman(clip_out, clip_out_count, clip_in, &clip_in_count);
+		// // clip +y
+		// clip_sutherland_hodgeman(clip_in, clip_in_count, clip_out, &clip_out_count);
+		// // clip -y
+		// clip_sutherland_hodgeman(clip_out, clip_out_count, clip_in, &clip_in_count);
+		// // clip +z
+		// clip_sutherland_hodgeman(clip_in, clip_in_count, clip_out, &clip_out_count);
+		// // clip -z
+		// clip_sutherland_hodgeman(clip_out, clip_out_count, clip_in, &clip_in_count);
 
 		// NOTE(mal): because we have now essentially mirrored our triangle across
 		// the X axis the winding order of our vertices has technically changed, so
@@ -696,7 +762,8 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 			? (vs[0].position.y < vs[2].position.y ? vs[0].position.y : vs[2].position.y)
 			: (vs[1].position.y < vs[2].position.y ? vs[1].position.y : vs[2].position.y);
 
-		// TODO(mal): Do actual vertex clipping and get rid of this
+		// FIXME(mal)@clipping: Remove, will not be needed after clipping implemented.
+		// Or if I implement guard-band clipping (see Realtime Rendering) maybe I should leave it in?
 		ymin = ymin < 0 ? 0 : ymin;
 		ymax = ymax > offscreen_buffer->height ? offscreen_buffer->height : ymax;
 		xmin = xmin < 0 ? 0 : xmin;
@@ -705,9 +772,18 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 		// NOTE(mal): Does NOT account for winding order so at the moment we always render even if
 		// the triange is facing away from us.
 		if (game_state->render_wireframe) {
-			draw_line_2d(pixels, offscreen_buffer->width, offscreen_buffer->height, vs[0].position, vs[1].position);
-			draw_line_2d(pixels, offscreen_buffer->width, offscreen_buffer->height, vs[1].position, vs[2].position);
-			draw_line_2d(pixels, offscreen_buffer->width, offscreen_buffer->height, vs[2].position, vs[0].position);
+			draw_line_2d(
+				pixels, offscreen_buffer->width, offscreen_buffer->height,
+				vs[0].position.x, vs[0].position.y, vs[1].position.x, vs[1].position.y
+			);
+			draw_line_2d(
+				pixels, offscreen_buffer->width, offscreen_buffer->height,
+				vs[1].position.x, vs[1].position.y, vs[2].position.x, vs[2].position.y
+			);
+			draw_line_2d(
+				pixels, offscreen_buffer->width, offscreen_buffer->height,
+				vs[2].position.x, vs[2].position.y, vs[0].position.x, vs[0].position.y
+			);
 			continue;
 		}
 
@@ -721,9 +797,9 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 		//
 		// Prime our linear stepping with weights using point at topleft of the triangle's bounding box.
 		Vec3 p = { .x = (float)xmin + 0.5f, .y = (float)ymin + 0.5f }; // test pixel center
-		float w0_row = edge_function(vs[1].position, vs[2].position, p);
-		float w1_row = edge_function(vs[2].position, vs[0].position, p);
-		float w2_row = edge_function(vs[0].position, vs[1].position, p);
+		float w0_row = edge_function(vs[1].position.x, vs[1].position.y, vs[2].position.x, vs[2].position.y, p.x, p.y);
+		float w1_row = edge_function(vs[2].position.x, vs[2].position.y, vs[0].position.x, vs[0].position.y, p.x, p.y);
+		float w2_row = edge_function(vs[0].position.x, vs[0].position.y, vs[1].position.x, vs[1].position.y, p.x, p.y);
 
 		// Constant weight deltas for horizontal and vertical steps
 		//
@@ -742,7 +818,11 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 		float d_w1_row = (vs[2].position.x - vs[0].position.x);
 		float d_w2_row = (vs[0].position.x - vs[1].position.x);
 
-		float area = edge_function(vs[0].position, vs[1].position, vs[2].position);
+		float area = edge_function(
+			vs[0].position.x, vs[0].position.y,
+			vs[1].position.x, vs[1].position.y,
+			vs[2].position.x, vs[2].position.y
+		);
 		float reciprocal_area = 1.0f / area;
 
 		for (int row = ymin; row < ymax; row++) {
