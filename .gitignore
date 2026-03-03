@@ -1,6 +1,7 @@
 /build
 *.rdbg
 compile_flags.txt
+.gdbinit
 
 # Ignore generated wayland protocols
 /src/wayland/
