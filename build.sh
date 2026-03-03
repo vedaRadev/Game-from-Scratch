@@ -22,6 +22,7 @@ build_game() {
 	cd build
 
 	DEBUG_COMPILER_FLAGS="-O0 -g3 -DASSERTIONS_ENABLED"
+	RELEASE_COMPILER_FLAGS="-O3"
 	COMMON_COMPILER_FLAGS="-std=c17 $DEBUG_COMPILER_FLAGS -ffast-math\
 		-Wall -Wextra -Werror\
 		-Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Wno-sign-compare"

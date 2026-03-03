@@ -830,8 +830,9 @@ char *debug_platform_read_entire_file(char *file_path) {
 		file_path, strerror(errno)
 	);
 	struct stat file_stat;
+	int stat_result = fstat(fd, &file_stat);
 	ASSERT_MSG_FMT(
-		fstat(fd, &file_stat) == 0,
+		stat_result == 0,
 		"Failed to stat file %s: %s\n",
 		file_path, strerror(errno)
 	);
@@ -843,8 +844,9 @@ char *debug_platform_read_entire_file(char *file_path) {
 }
 
 void debug_platform_free_entire_file(char *file_data, size_t file_data_len) {
+	int result = munmap(file_data, file_data_len);
 	ASSERT_MSG_FMT(
-		munmap(file_data, file_data_len) == 0,
+		result == 0,
 		"Failed to free file %s: %s\n",
 		file_data, strerror(errno)
 	);
@@ -852,11 +854,8 @@ void debug_platform_free_entire_file(char *file_data, size_t file_data_len) {
 
 int main() {
 	char exe_path[PATH_MAX];
-	ssize_t exe_path_len = 0;
-	ASSERT_MSG(
-		(exe_path_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1)) > 0,
-		"Failed to get path of executable"
-	);
+	ssize_t exe_path_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+	ASSERT_MSG(exe_path_len > 0, "Failed to get path of executable");
 	exe_path[exe_path_len] = '\0';
 	size_t exe_dir_path_len = exe_path_len;
 	while (exe_path[exe_dir_path_len - 1] != '/') {
@@ -865,7 +864,8 @@ int main() {
 	char exe_dir_path[PATH_MAX];
 	exe_dir_path[exe_dir_path_len] = '\0';
 	strncpy(exe_dir_path, exe_path, exe_dir_path_len);
-	ASSERT(chdir(exe_dir_path) == 0);
+	int chdir_result = chdir(exe_dir_path);
+	ASSERT(chdir_result == 0);
 
 	#define NBUFFERS 1 // just single buffering at the moment
 
@@ -972,7 +972,8 @@ int main() {
 		// TODO(mal): Check access with R_OK | X_OK instead of just F_OK?
 		// NOTE(mal): Hot-reloading gotcha! https://stackoverflow.com/questions/56334288/how-to-hot-reload-shared-library-on-linux
 		if (game_so_stat.st_mtime > game_code.last_modified_time && access("./game.lock", F_OK) != 0) {
-			ASSERT(dlclose(game_code.lib_handle) == 0);
+			int dlclose_result = dlclose(game_code.lib_handle);
+			ASSERT(dlclose_result == 0);
 			game_code = load_game_code();
 		}
 

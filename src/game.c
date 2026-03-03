@@ -434,8 +434,82 @@ float edge_function(float v0x, float v0y, float v1x, float v1y, float px, float 
 }
 
 // TODO(mal): Finish implementation
-void clip_sutherland_hodgeman(Vertex *input, size_t input_len, Vertex *output, size_t *output_len) {
-	ASSERT(input_len == 3 || input_len == 4);
+// FIXME(mal): Take input_capacity and output_capacity parameters to ensure we don't overflow buffers.
+// NOTE(mal): Currently, this assumes that the input capacity and the output capacity are the same!
+// TODO(mal): This signature sucks, fix it.
+size_t clip_sutherland_hodgeman(int plane_index, int plane_sign, Vertex *input, size_t input_count, Vertex *output) {
+	size_t output_count = 0;
+
+	// Clip edge from start_vertex to end_vertex against the plane.
+	// We will do this sequentially for each edge in the polygon.
+	Vertex *start_vertex = &input[input_count - 1];
+	float dist_start_vertex_to_plane = start_vertex->position.w + plane_sign * start_vertex->position.elements[plane_index];
+	int   start_vertex_inside_plane  = dist_start_vertex_to_plane >= 0;
+	for (int i = 0; i < input_count; i++) {
+		Vertex *end_vertex = &input[i];
+		float dist_end_vertex_to_plane = end_vertex->position.w + plane_sign * end_vertex->position.elements[plane_index];
+		int   end_vertex_inside_plane  = dist_end_vertex_to_plane >= 0;
+
+		// We only want to output vertices if at least one of endpoints is inside the plane.
+		if (start_vertex_inside_plane || end_vertex_inside_plane) {
+			if (start_vertex_inside_plane) {
+				output[output_count] = *start_vertex;
+				output_count++;
+			}
+
+			// If one of our vertices is outside the plane we have to generate a clip point at
+			// the intersection of our edge and the plane.
+			if (!(start_vertex_inside_plane && end_vertex_inside_plane)) {
+				Vertex *clip_vertex = &output[output_count];
+				output_count++;
+
+				// It's important that we generate t in the same direction (inside plane to
+				// outside plane) here for both cases, otherwise we can end up with cracks in
+				// our geometry between two neighboring polygons due to floating point error.
+
+				// TODO(mal): create interpolation functions for vec3, vec4
+
+				if (end_vertex_inside_plane) {
+					// end to start
+					float t = dist_end_vertex_to_plane / (dist_end_vertex_to_plane - dist_start_vertex_to_plane);
+					// NOTE(mal): Clamp to [0, 1] for the cases where a vertex lies directly on the
+					// plane and floating point error causes the denominator to be veeeery close to
+					// 0, meaning the computed distance explodes way past the bounds of our frustum.
+					if (t < 0.0f) t = 0.0f;
+					if (t > 1.0f) t = 1.0f;
+					clip_vertex->position.x = end_vertex->position.x - t * (end_vertex->position.x - start_vertex->position.x);
+					clip_vertex->position.y = end_vertex->position.y - t * (end_vertex->position.y - start_vertex->position.y);
+					clip_vertex->position.z = end_vertex->position.z - t * (end_vertex->position.z - start_vertex->position.z);
+					clip_vertex->position.w = end_vertex->position.w - t * (end_vertex->position.w - start_vertex->position.w);
+					clip_vertex->color      = end_vertex->color - t * (end_vertex->color - start_vertex->color);
+					clip_vertex->tx_u       = end_vertex->tx_u - t * (end_vertex->tx_u - start_vertex->tx_u);
+					clip_vertex->tx_v       = end_vertex->tx_v - t * (end_vertex->tx_v - start_vertex->tx_v);
+				} else {
+					// start to end
+					float t = dist_start_vertex_to_plane / (dist_start_vertex_to_plane - dist_end_vertex_to_plane);
+					// NOTE(mal): Clamp to [0, 1] for the cases where a vertex lies directly on the
+					// plane and floating point error causes the denominator to be veeeery close to
+					// 0, meaning the computed distance explodes way past the bounds of our frustum.
+					if (t < 0.0f) t = 0.0f;
+					if (t > 1.0f) t = 1.0f;
+					clip_vertex->position.x = start_vertex->position.x + t * (end_vertex->position.x - start_vertex->position.x);
+					clip_vertex->position.y = start_vertex->position.y + t * (end_vertex->position.y - start_vertex->position.y);
+					clip_vertex->position.z = start_vertex->position.z + t * (end_vertex->position.z - start_vertex->position.z);
+					clip_vertex->position.w = start_vertex->position.w + t * (end_vertex->position.w - start_vertex->position.w);
+					clip_vertex->color      = start_vertex->color + t * (end_vertex->color - start_vertex->color);
+					clip_vertex->tx_u       = start_vertex->tx_u + t * (end_vertex->tx_u - start_vertex->tx_u);
+					clip_vertex->tx_v       = start_vertex->tx_v + t * (end_vertex->tx_v - start_vertex->tx_v);
+				}
+			}
+		}
+
+		// The end_vertex is going to be the start_vertex of next iteration's edge
+		start_vertex = end_vertex;
+		dist_start_vertex_to_plane = dist_end_vertex_to_plane;
+		start_vertex_inside_plane  = end_vertex_inside_plane;
+	}
+
+	return output_count;
 }
 
 EXPORT void game_init(GameMemory *memory, int initial_width, int initial_height) {
@@ -446,25 +520,25 @@ EXPORT void game_init(GameMemory *memory, int initial_width, int initial_height)
 
 	// 0: Square bottom left
 	game_state->square.local_vertices[0] = (Vertex){
-		.position = { .x = -1, .y = -1 },
+		.position = { .x = -1, .y = -1, .w = 1 },
 		.color = -1,
 		.tx_u = 0.0f, .tx_v = 1.0f,
 	};
 	// 1: Square top left
 	game_state->square.local_vertices[1] = (Vertex){
-		.position = { .x = -1, .y = 1 },
+		.position = { .x = -1, .y = 1, .w = 1 },
 		.color = -1,
 		.tx_u = 0.0f, .tx_v = 0.0f,
 	};
 	// 2: Square bottom right
 	game_state->square.local_vertices[2] = (Vertex){
-		.position = { .x = 1, .y = -1 },
+		.position = { .x = 1, .y = -1, .w = 1 },
 		.color = -1,
 		.tx_u = 1.0f, .tx_v = 1.0f,
 	};
 	// 3: Square top right
 	game_state->square.local_vertices[3] = (Vertex){
-		.position = { .x = 1, .y = 1 },
+		.position = { .x = 1, .y = 1, .w = 1 },
 		.color = -1,
 		.tx_u = 1.0f, .tx_v = 0.0f,
 	};
@@ -672,230 +746,226 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 		for (int i = 0; i < 3; i++) v1.position.elements[i] += game_state->square.world_position.elements[i];
 		for (int i = 0; i < 3; i++) v2.position.elements[i] += game_state->square.world_position.elements[i];
 
-		Vertex *verts[3] = { &v0, &v1, &v2 };
-		float reciprocal_depth[3];
-		for (int i = 0; i < 3; i++) {
-			Vec4 homogeneous_vert_pos = { .x = verts[i]->position.x, .y = verts[i]->position.y, .z = verts[i]->position.z, .w = 1 };
-			Vec4 view_space_vert = mult_mat4x4_vec4(world_to_camera, homogeneous_vert_pos);
-			Vec4 perspective_vert = mult_mat4x4_vec4(perspective, view_space_vert);
-			// NOTE(mal): If our perspective projection is set up right, then the resulting point
-			// should be in a space which is our viewing frustum transformed into a unit cube.
-			// From RTR 4.7.2 p98: "The perspective transform in any form followed by clipping and
-			// homogenization (division by w) results in normalized device coordinates.
+		// Take vertices world --> view --> homogeneous clip
+		v0.position = mult_mat4x4_vec4(perspective, mult_mat4x4_vec4(world_to_camera, v0.position));
+		v1.position = mult_mat4x4_vec4(perspective, mult_mat4x4_vec4(world_to_camera, v1.position));
+		v2.position = mult_mat4x4_vec4(perspective, mult_mat4x4_vec4(world_to_camera, v2.position));
 
-			//////////////////////////////
-			// BEGIN CLIPPING
-			//////////////////////////////
+		//////////////////////////////
+		// BEGIN CLIPPING
+		//////////////////////////////
 
-			// TODO(mal): Clipping optimization -- check triangle bounding box against frustum
-			// planes and only clip if straddling.
-
-			// // NOTE(mal): See "Essential Math" 7.4.3 and 7.4.4 about clipping
-			// float signed_dist_to_pos_x_plane = perspective_vert.w - perspective_vert.x;
-			// float signed_dist_to_neg_x_plane = perspective_vert.w + perspective_vert.x;
-			// float signed_dist_to_pos_y_plane = perspective_vert.w - perspective_vert.y;
-			// float signed_dist_to_neg_y_plane = perspective_vert.w + perspective_vert.y;
-			// float signed_dist_to_pos_z_plane = perspective_vert.w - perspective_vert.z;
-			// float signed_dist_to_neg_z_plane = perspective_vert.w + perspective_vert.z;
-
-			//////////////////////////////
-			// END CLIPPING
-			//////////////////////////////
-
-			// NOTE(mal): After perspective projection and before perspective divide, the w
-			// component IS our view-space Z (depth) coordinate!
-			float reciprocal_w = 1.0f / perspective_vert.w;
-			reciprocal_depth[i] = reciprocal_w;
-			perspective_vert.x *= reciprocal_w;
-			perspective_vert.y *= reciprocal_w;
-			perspective_vert.z *= reciprocal_w;
-			perspective_vert.w *= reciprocal_w;
-			Vec4 screen_space_vert = mult_mat4x4_vec4(ndc_to_screen, perspective_vert);
-			verts[i]->position = screen_space_vert;
-			// verts[i]->position = (Vec4){ .x = screen_space_vert.x, .y = screen_space_vert.y, .z = screen_space_vert.z };
+		// NOTE(mal): I believe that each plane can add at most one generated vertex, which means
+		// that if we start with 3 and clip against 6 frustum planes then we will end up with at
+		// most 9 vertices (7 triangles if we use the fan approach to retriangulate).
+		Vertex clip_buffer_a[9] = { v0, v1, v2 };
+		Vertex clip_buffer_b[9];
+		Vertex *input = clip_buffer_a;
+		Vertex *output = clip_buffer_b;
+		size_t input_count, output_count;
+		#define SWAP_POINTERS(a, b) {\
+			void *tmp = (a);\
+			(a) = (b);\
+			(b) = tmp;\
 		}
 
-		// Vertex clip_in [4] = { v0, v1, v2 };
-		// size_t clip_in_count = 3;
-		// Vertex clip_out[4];
-		// size_t clip_out_count;
-		// // clip against the six frustum planes
+		// clip against the six frustum planes
+		// NOTE(mal): See "Essential Math" 7.4.3 and 7.4.4 about clipping
+
+		// clip +x
+		input_count  = 3;
+		output_count = clip_sutherland_hodgeman(0, -1, input, input_count, output);
+		// clip -x
+		SWAP_POINTERS(input, output);
+		input_count  = output_count;
+		output_count = clip_sutherland_hodgeman(0, +1, input, input_count, output);
+		// clip +y
+		SWAP_POINTERS(input, output);
+		input_count  = output_count;
+		output_count = clip_sutherland_hodgeman(1, -1, input, input_count, output);
+		// clip -y
+		SWAP_POINTERS(input, output);
+		input_count  = output_count;
+		output_count = clip_sutherland_hodgeman(1, +1, input, input_count, output);
+		// clip +z
+		SWAP_POINTERS(input, output);
+		input_count  = output_count;
+		output_count = clip_sutherland_hodgeman(2, -1, input, input_count, output);
+		// clip -z
+		SWAP_POINTERS(input, output);
+		input_count  = output_count;
+		output_count = clip_sutherland_hodgeman(2, +1, input, input_count, output);
 		
-		// // clip +x
-		// clip_sutherland_hodgeman(clip_in, clip_in_count, clip_out, &clip_out_count);
-		// // clip -x
-		// clip_sutherland_hodgeman(clip_out, clip_out_count, clip_in, &clip_in_count);
-		// // clip +y
-		// clip_sutherland_hodgeman(clip_in, clip_in_count, clip_out, &clip_out_count);
-		// // clip -y
-		// clip_sutherland_hodgeman(clip_out, clip_out_count, clip_in, &clip_in_count);
-		// // clip +z
-		// clip_sutherland_hodgeman(clip_in, clip_in_count, clip_out, &clip_out_count);
-		// // clip -z
-		// clip_sutherland_hodgeman(clip_out, clip_out_count, clip_in, &clip_in_count);
+		Vertex *clipped_vertices     = output;
+		size_t  clipped_vertex_count = output_count;
 
-		// NOTE(mal): because we have now essentially mirrored our triangle across
-		// the X axis the winding order of our vertices has technically changed, so
-		// we need to feed the vertices in backward!
-		// TODO(mal): Instead of copying or changing to Vertex *vs[3], just hard-code which vertices
-		// we're using directly?
-		Vertex vs[3] = { v2, v1, v0 };
-		float reciprocal_depth_2[3] = { reciprocal_depth[2], reciprocal_depth[1], reciprocal_depth[0] };
-		// Compute the AABB of the triangle so that we don't have to loop over the entire buffer
-		// every time regardless of the size of the triangle.
-		// TODO(mal): Maybe create to_vec3_max(Vec3 a, Vec3 b) and to_vec3_min(Vec3 a, Vec3 b)
-		// functions and call those here instead?
-		int xmax =
-			vs[0].position.x > vs[1].position.x
-			? (vs[0].position.x > vs[2].position.x ? vs[0].position.x : vs[2].position.x)
-			: (vs[1].position.x > vs[2].position.x ? vs[1].position.x : vs[2].position.x);
-		int xmin =
-			vs[0].position.x < vs[1].position.x
-			? (vs[0].position.x < vs[2].position.x ? vs[0].position.x : vs[2].position.x)
-			: (vs[1].position.x < vs[2].position.x ? vs[1].position.x : vs[2].position.x);
-		int ymax =
-			vs[0].position.y > vs[1].position.y
-			? (vs[0].position.y > vs[2].position.y ? vs[0].position.y : vs[2].position.y)
-			: (vs[1].position.y > vs[2].position.y ? vs[1].position.y : vs[2].position.y);
-		int ymin =
-			vs[0].position.y < vs[1].position.y
-			? (vs[0].position.y < vs[2].position.y ? vs[0].position.y : vs[2].position.y)
-			: (vs[1].position.y < vs[2].position.y ? vs[1].position.y : vs[2].position.y);
+		//////////////////////////////
+		// END CLIPPING
+		//////////////////////////////
 
-		// FIXME(mal)@clipping: Remove, will not be needed after clipping implemented.
-		// Or if I implement guard-band clipping (see Realtime Rendering) maybe I should leave it in?
-		ymin = ymin < 0 ? 0 : ymin;
-		ymax = ymax > offscreen_buffer->height ? offscreen_buffer->height : ymax;
-		xmin = xmin < 0 ? 0 : xmin;
-		xmax = xmax > offscreen_buffer->width ? offscreen_buffer->width : xmax;
-
-		// NOTE(mal): Does NOT account for winding order so at the moment we always render even if
-		// the triange is facing away from us.
-		if (game_state->render_wireframe) {
-			draw_line_2d(
-				pixels, offscreen_buffer->width, offscreen_buffer->height,
-				vs[0].position.x, vs[0].position.y, vs[1].position.x, vs[1].position.y
-			);
-			draw_line_2d(
-				pixels, offscreen_buffer->width, offscreen_buffer->height,
-				vs[1].position.x, vs[1].position.y, vs[2].position.x, vs[2].position.y
-			);
-			draw_line_2d(
-				pixels, offscreen_buffer->width, offscreen_buffer->height,
-				vs[2].position.x, vs[2].position.y, vs[0].position.x, vs[0].position.y
-			);
-			continue;
-		}
-
-		// NOTE(mal): Avoiding per-pixel edge function computation. This should be possible because the
-		// edge function is linear. Thus,
-		// E(x + 1, y) = E(x, y) + dY
-		// E(x, y + 1) = E(x, y) - dX
-		// https://www.cs.drexel.edu/~deb39/Classes/Papers/comp175-06-pineda.pdf
-		// Taking the algorithm for stepping from here: https://www.youtube.com/watch?v=k5wtuKWmV48
-		// at chapter "Avoiding Computing the Edge Function Per-Pixel".
-		//
-		// Prime our linear stepping with weights using point at topleft of the triangle's bounding box.
-		Vec3 p = { .x = (float)xmin + 0.5f, .y = (float)ymin + 0.5f }; // test pixel center
-		float w0_row = edge_function(vs[1].position.x, vs[1].position.y, vs[2].position.x, vs[2].position.y, p.x, p.y);
-		float w1_row = edge_function(vs[2].position.x, vs[2].position.y, vs[0].position.x, vs[0].position.y, p.x, p.y);
-		float w2_row = edge_function(vs[0].position.x, vs[0].position.y, vs[1].position.x, vs[1].position.y, p.x, p.y);
-
-		// Constant weight deltas for horizontal and vertical steps
-		//
-		// From my edge function, given how I set it up:
-		// (px - v0x) * (v1y - v0y) - (py - v0y) * (v1x - v0x)
-		// (px*v1y - px*v0y -v0x*v1y + v0x*v0y) - (py*v1x - py*v0x - v0y*v1x + v0y*v0x)
-		// px*v1y - px*v0y - v0x*v1y + v0x*v0y - py*v1x + py*v0x + v0y*v1x - v0y*v0x
-		// px*v1y - px*v0y - v0x*v1y - py*v1x + py*v0x + v0y*v1x
-		// px(v1y - v0y) - v0x*v1y + py(-v1x + v0x) + v0y*v1x
-		// px(v1y - v0y) + py(v0x - v1x) - v0x*v1y + v0y*v1x
-		// The term multiplying px is the column delta and the term multiplying py is the row delta.
-		float d_w0_col = (vs[2].position.y - vs[1].position.y);
-		float d_w1_col = (vs[0].position.y - vs[2].position.y);
-		float d_w2_col = (vs[1].position.y - vs[0].position.y);
-		float d_w0_row = (vs[1].position.x - vs[2].position.x);
-		float d_w1_row = (vs[2].position.x - vs[0].position.x);
-		float d_w2_row = (vs[0].position.x - vs[1].position.x);
-
-		float area = edge_function(
-			vs[0].position.x, vs[0].position.y,
-			vs[1].position.x, vs[1].position.y,
-			vs[2].position.x, vs[2].position.y
-		);
-		float reciprocal_area = 1.0f / area;
-
-		for (int row = ymin; row < ymax; row++) {
-			float w0 = w0_row;
-			float w1 = w1_row;
-			float w2 = w2_row;
-			for (int col = xmin; col < xmax; col++) {
-				float w0_percent = w0 * reciprocal_area;
-				float w1_percent = w1 * reciprocal_area;
-				float w2_percent = w2 * reciprocal_area;
-
-				if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
-					// HACK(mal): poor man's clipping to avoid crashing
-					// TODO(mal): Get rid of this once clipping is actually added.
-					int has_negative_depth = 0;
-					for (int i = 0; i < 3; i++) {
-						if (reciprocal_depth_2[i] < 0) {
-							has_negative_depth = 1;
-							break;
-						}
-					}
-					if (has_negative_depth) {
-						continue;
-					}
-
-					// If p was inside the triangle_vertices, compute its barycentric coordinates for vertex
-					// attribute interpolation.
-
-					// TODO(mal): Rename some of this stuff. Names are taken from Realtime
-					// Rendering. See p1000 for perspective-correct barycentric interpolation.
-					// I believe here we're essentially foreshortening our barycentric coordinates.
-					float f0 = w0 * reciprocal_depth_2[0];
-					float f1 = w1 * reciprocal_depth_2[1];
-					float f2 = w2 * reciprocal_depth_2[2];
-					float perspective_reciprocal_area = 1.0f / (f0 + f1 + f2);
-
-					// TEXTURING
-					float tx_u = (f0 * vs[0].tx_u + f1 * vs[1].tx_u + f2 * vs[2].tx_u) * perspective_reciprocal_area;
-					float tx_v = (f0 * vs[0].tx_v + f1 * vs[1].tx_v + f2 * vs[2].tx_v) * perspective_reciprocal_area;
-					unsigned tx_x = (unsigned)(tx_u * game_state->texture_width);
-					unsigned tx_y = (unsigned)(tx_v * game_state->texture_height);
-					unsigned texel_index = tx_x + tx_y * game_state->texture_width;
-					// FIXME(mal): Need to detect machine's endianness and extract the bits
-					// properly. Check the 32-bit color format of TGA (or any other texture
-					// file we may load). I believe it's BGRA.
-					uint32_t texel_tga_color = game_state->texture_pixels[texel_index];
-					uint8_t  texel_red       = (texel_tga_color & 0x00FF0000) >> 16;
-					uint8_t  texel_green     = (texel_tga_color & 0x0000FF00) >> 8;
-					uint8_t  texel_blue      = texel_tga_color & 0x000000FF;
-					uint32_t texel_color     = (texel_red << 16) | (texel_green << 8) | texel_blue;
-					pixels[col + row * offscreen_buffer->width] = texel_color;
-
-					// #define U32_R8(x) (((x) & (0xFF << 16)) >> 16)
-					// #define U32_G8(x) (((x) & (0xFF << 8)) >> 8)
-					// #define U32_B8(x) ((x) & 0xFF)
-					// uint8_t color_red   = (f0 * U32_R8(vs[0].color) + f1 * U32_R8(vs[1].color) + f2 * U32_R8(vs[2].color)) * perspective_reciprocal_area;
-					// uint8_t color_green = (f0 * U32_G8(vs[0].color) + f1 * U32_G8(vs[1].color) + f2 * U32_G8(vs[2].color)) * perspective_reciprocal_area;
-					// uint8_t color_blue  = (f0 * U32_B8(vs[0].color) + f1 * U32_B8(vs[1].color) + f2 * U32_B8(vs[2].color)) * perspective_reciprocal_area;
-					// pixels[col + row * offscreen_buffer->width] =
-					// 	color_red << 16
-					// 	| color_green << 8
-					// 	| color_blue;
-
-				}
-
-				w0 += d_w0_col;
-				w1 += d_w1_col;
-				w2 += d_w2_col;
+		size_t triangle_fan_center_index = 0;
+		for (int i = 2; i < clipped_vertex_count; i++) {
+			// Grab our triangle from the fan generated by clipping. Also fix the winding order that
+			// we're about to screw up by transforming from homogenous clip --> NDC --> screen.
+			// TODO(mal): Stop copying, but then also need to make sure that we don't update the
+			// same vertices over and over again with perspective divides!
+			Vertex triangle[3] = { clipped_vertices[i], clipped_vertices[i - 1], clipped_vertices[triangle_fan_center_index] };
+			float reciprocal_depth[3];
+			for (int i = 0; i < 3; i++) {
+				// NOTE(mal): After perspective projection and before perspective divide, the w
+				// component IS our view-space Z (depth) coordinate!
+				float reciprocal_w = 1.0f / triangle[i].position.w;
+				reciprocal_depth[i] = reciprocal_w;
+				// perspective divide: homogeneous clip --> NDC
+				triangle[i].position.x *= reciprocal_w;
+				triangle[i].position.y *= reciprocal_w;
+				triangle[i].position.z *= reciprocal_w;
+				triangle[i].position.w *= reciprocal_w;
+				// NDC --> screen
+				triangle[i].position = mult_mat4x4_vec4(ndc_to_screen, triangle[i].position);
 			}
 
-			w0_row += d_w0_row;
-			w1_row += d_w1_row;
-			w2_row += d_w2_row;
+			// Compute the AABB of the triangle so that we don't have to loop over the entire buffer
+			// every time regardless of the size of the triangle.
+			// TODO(mal): Maybe create to_vec3_max(Vec3 a, Vec3 b) and to_vec3_min(Vec3 a, Vec3 b)
+			// functions and call those here instead?
+			int xmax =
+				triangle[0].position.x > triangle[1].position.x
+				? (triangle[0].position.x > triangle[2].position.x ? triangle[0].position.x : triangle[2].position.x)
+				: (triangle[1].position.x > triangle[2].position.x ? triangle[1].position.x : triangle[2].position.x);
+			int xmin =
+				triangle[0].position.x < triangle[1].position.x
+				? (triangle[0].position.x < triangle[2].position.x ? triangle[0].position.x : triangle[2].position.x)
+				: (triangle[1].position.x < triangle[2].position.x ? triangle[1].position.x : triangle[2].position.x);
+			int ymax =
+				triangle[0].position.y > triangle[1].position.y
+				? (triangle[0].position.y > triangle[2].position.y ? triangle[0].position.y : triangle[2].position.y)
+				: (triangle[1].position.y > triangle[2].position.y ? triangle[1].position.y : triangle[2].position.y);
+			int ymin =
+				triangle[0].position.y < triangle[1].position.y
+				? (triangle[0].position.y < triangle[2].position.y ? triangle[0].position.y : triangle[2].position.y)
+				: (triangle[1].position.y < triangle[2].position.y ? triangle[1].position.y : triangle[2].position.y);
+
+			ASSERT(xmin >= 0);
+			ASSERT(xmax <= offscreen_buffer->width);
+			ASSERT(ymin >= 0);
+			ASSERT(ymax <= offscreen_buffer->height);
+
+			// NOTE(mal): Does NOT account for winding order so at the moment we always render even if
+			// the triange is facing away from us.
+			if (game_state->render_wireframe) {
+				draw_line_2d(
+					pixels, offscreen_buffer->width, offscreen_buffer->height,
+					triangle[0].position.x, triangle[0].position.y, triangle[1].position.x, triangle[1].position.y
+				);
+				draw_line_2d(
+					pixels, offscreen_buffer->width, offscreen_buffer->height,
+					triangle[1].position.x, triangle[1].position.y, triangle[2].position.x, triangle[2].position.y
+				);
+				draw_line_2d(
+					pixels, offscreen_buffer->width, offscreen_buffer->height,
+					triangle[2].position.x, triangle[2].position.y, triangle[0].position.x, triangle[0].position.y
+				);
+				continue;
+			}
+
+			// NOTE(mal): Avoiding per-pixel edge function computation. This should be possible because the
+			// edge function is linear. Thus,
+			// E(x + 1, y) = E(x, y) + dY
+			// E(x, y + 1) = E(x, y) - dX
+			// https://www.cs.drexel.edu/~deb39/Classes/Papers/comp175-06-pineda.pdf
+			// Taking the algorithm for stepping from here: https://www.youtube.com/watch?v=k5wtuKWmV48
+			// at chapter "Avoiding Computing the Edge Function Per-Pixel".
+			//
+			// Prime our linear stepping with weights using point at topleft of the triangle's bounding box.
+			Vec3 p = { .x = (float)xmin + 0.5f, .y = (float)ymin + 0.5f }; // test pixel center
+			float w0_row = edge_function(triangle[1].position.x, triangle[1].position.y, triangle[2].position.x, triangle[2].position.y, p.x, p.y);
+			float w1_row = edge_function(triangle[2].position.x, triangle[2].position.y, triangle[0].position.x, triangle[0].position.y, p.x, p.y);
+			float w2_row = edge_function(triangle[0].position.x, triangle[0].position.y, triangle[1].position.x, triangle[1].position.y, p.x, p.y);
+
+			// Constant weight deltas for horizontal and vertical steps
+			//
+			// From my edge function, given how I set it up:
+			// (px - v0x) * (v1y - v0y) - (py - v0y) * (v1x - v0x)
+			// (px*v1y - px*v0y -v0x*v1y + v0x*v0y) - (py*v1x - py*v0x - v0y*v1x + v0y*v0x)
+			// px*v1y - px*v0y - v0x*v1y + v0x*v0y - py*v1x + py*v0x + v0y*v1x - v0y*v0x
+			// px*v1y - px*v0y - v0x*v1y - py*v1x + py*v0x + v0y*v1x
+			// px(v1y - v0y) - v0x*v1y + py(-v1x + v0x) + v0y*v1x
+			// px(v1y - v0y) + py(v0x - v1x) - v0x*v1y + v0y*v1x
+			// The term multiplying px is the column delta and the term multiplying py is the row delta.
+			float d_w0_col = (triangle[2].position.y - triangle[1].position.y);
+			float d_w1_col = (triangle[0].position.y - triangle[2].position.y);
+			float d_w2_col = (triangle[1].position.y - triangle[0].position.y);
+			float d_w0_row = (triangle[1].position.x - triangle[2].position.x);
+			float d_w1_row = (triangle[2].position.x - triangle[0].position.x);
+			float d_w2_row = (triangle[0].position.x - triangle[1].position.x);
+
+			float area = edge_function(
+				triangle[0].position.x, triangle[0].position.y,
+				triangle[1].position.x, triangle[1].position.y,
+				triangle[2].position.x, triangle[2].position.y
+			);
+			float reciprocal_area = 1.0f / area;
+
+			for (int row = ymin; row < ymax; row++) {
+				float w0 = w0_row;
+				float w1 = w1_row;
+				float w2 = w2_row;
+				for (int col = xmin; col < xmax; col++) {
+					float w0_percent = w0 * reciprocal_area;
+					float w1_percent = w1 * reciprocal_area;
+					float w2_percent = w2 * reciprocal_area;
+
+					if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
+						// If p was inside the triangle_vertices, compute its barycentric coordinates for vertex
+						// attribute interpolation.
+
+						// TODO(mal): Rename some of this stuff. Names are taken from Realtime
+						// Rendering. See p1000 for perspective-correct barycentric interpolation.
+						// I believe here we're essentially foreshortening our barycentric coordinates.
+						float f0 = w0 * reciprocal_depth[0];
+						float f1 = w1 * reciprocal_depth[1];
+						float f2 = w2 * reciprocal_depth[2];
+						float perspective_reciprocal_area = 1.0f / (f0 + f1 + f2);
+
+						// TEXTURING
+						float tx_u = (f0 * triangle[0].tx_u + f1 * triangle[1].tx_u + f2 * triangle[2].tx_u) * perspective_reciprocal_area;
+						float tx_v = (f0 * triangle[0].tx_v + f1 * triangle[1].tx_v + f2 * triangle[2].tx_v) * perspective_reciprocal_area;
+						unsigned tx_x = (unsigned)(tx_u * game_state->texture_width);
+						unsigned tx_y = (unsigned)(tx_v * game_state->texture_height);
+						unsigned texel_index = tx_x + tx_y * game_state->texture_width;
+						// FIXME(mal): Need to detect machine's endianness and extract the bits
+						// properly. Check the 32-bit color format of TGA (or any other texture
+						// file we may load). I believe it's BGRA.
+						uint32_t texel_tga_color = game_state->texture_pixels[texel_index];
+						uint8_t  texel_red       = (texel_tga_color & 0x00FF0000) >> 16;
+						uint8_t  texel_green     = (texel_tga_color & 0x0000FF00) >> 8;
+						uint8_t  texel_blue      = texel_tga_color & 0x000000FF;
+						uint32_t texel_color     = (texel_red << 16) | (texel_green << 8) | texel_blue;
+						pixels[col + row * offscreen_buffer->width] = texel_color;
+
+						// #define U32_R8(x) (((x) & (0xFF << 16)) >> 16)
+						// #define U32_G8(x) (((x) & (0xFF << 8)) >> 8)
+						// #define U32_B8(x) ((x) & 0xFF)
+						// uint8_t color_red   = (f0 * U32_R8(vs[0].color) + f1 * U32_R8(vs[1].color) + f2 * U32_R8(vs[2].color)) * perspective_reciprocal_area;
+						// uint8_t color_green = (f0 * U32_G8(vs[0].color) + f1 * U32_G8(vs[1].color) + f2 * U32_G8(vs[2].color)) * perspective_reciprocal_area;
+						// uint8_t color_blue  = (f0 * U32_B8(vs[0].color) + f1 * U32_B8(vs[1].color) + f2 * U32_B8(vs[2].color)) * perspective_reciprocal_area;
+						// pixels[col + row * offscreen_buffer->width] =
+						// 	color_red << 16
+						// 	| color_green << 8
+						// 	| color_blue;
+
+					}
+
+					w0 += d_w0_col;
+					w1 += d_w1_col;
+					w2 += d_w2_col;
+				}
+
+				w0_row += d_w0_row;
+				w1_row += d_w1_row;
+				w2_row += d_w2_row;
+			}
 		}
 	}
 }
@@ -922,9 +992,7 @@ EXPORT void game_update(GameMemory *memory, GameInput *input) {
 	game_state->square.vertex_list[5] = 3;
 
 	// Rotate
-	const float rot_speed = 2.0f;
-
-	// game_state->rotation_y_degrees += rot_speed;
+	const float rot_speed = 1.0f;
 
 	if (input->keys[GAME_KEY_J].is_down) game_state->rotation_y_degrees += rot_speed;
 	if (input->keys[GAME_KEY_L].is_down) game_state->rotation_y_degrees -= rot_speed;
@@ -932,10 +1000,12 @@ EXPORT void game_update(GameMemory *memory, GameInput *input) {
 	if (game_state->rotation_y_degrees > 180.0f) game_state->rotation_y_degrees -= 360.0f;
 	if (game_state->rotation_y_degrees < 180.0f) game_state->rotation_y_degrees += 360.0f;
 
-	if (input->keys[GAME_KEY_W].is_down) game_state->camera_world_position.z += 1.0f;
-	if (input->keys[GAME_KEY_S].is_down) game_state->camera_world_position.z -= 1.0f;
-	if (input->keys[GAME_KEY_A].is_down) game_state->camera_world_position.x -= 1.0f;
-	if (input->keys[GAME_KEY_D].is_down) game_state->camera_world_position.x += 1.0f;
+	const float move_speed = 0.1f;
+
+	if (input->keys[GAME_KEY_W].is_down) game_state->camera_world_position.z += move_speed;
+	if (input->keys[GAME_KEY_S].is_down) game_state->camera_world_position.z -= move_speed;
+	if (input->keys[GAME_KEY_A].is_down) game_state->camera_world_position.x -= move_speed;
+	if (input->keys[GAME_KEY_D].is_down) game_state->camera_world_position.x += move_speed;
 
 	if (input->keys[GAME_KEY_F1].is_down && !input->keys[GAME_KEY_F1].was_down)
 		game_state->render_wireframe = !game_state->render_wireframe;
