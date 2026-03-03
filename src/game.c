@@ -433,10 +433,8 @@ float edge_function(float v0x, float v0y, float v1x, float v1y, float px, float 
 	return result;
 }
 
-// TODO(mal): Finish implementation
 // FIXME(mal): Take input_capacity and output_capacity parameters to ensure we don't overflow buffers.
 // NOTE(mal): Currently, this assumes that the input capacity and the output capacity are the same!
-// TODO(mal): This signature sucks, fix it.
 size_t clip_sutherland_hodgeman(int plane_index, int plane_sign, Vertex *input, size_t input_count, Vertex *output) {
 	size_t output_count = 0;
 
@@ -699,8 +697,6 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 	ndc_to_screen.rows[3][2] = 0;
 	ndc_to_screen.rows[3][3] = 1;
 
-	// NOTE(mal): NOT optimized!
-	// TODO(mal): Optimization: only loop over pixels within the AABB of the triangle.
 	uint32_t *pixels = (uint32_t *)offscreen_buffer->memory;
 
 	// TODO(mal): remove, temporary background clear color
@@ -900,22 +896,11 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 			float d_w1_row = (triangle[2].position.x - triangle[0].position.x);
 			float d_w2_row = (triangle[0].position.x - triangle[1].position.x);
 
-			float area = edge_function(
-				triangle[0].position.x, triangle[0].position.y,
-				triangle[1].position.x, triangle[1].position.y,
-				triangle[2].position.x, triangle[2].position.y
-			);
-			float reciprocal_area = 1.0f / area;
-
 			for (int row = ymin; row < ymax; row++) {
 				float w0 = w0_row;
 				float w1 = w1_row;
 				float w2 = w2_row;
 				for (int col = xmin; col < xmax; col++) {
-					float w0_percent = w0 * reciprocal_area;
-					float w1_percent = w1 * reciprocal_area;
-					float w2_percent = w2 * reciprocal_area;
-
 					if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
 						// If p was inside the triangle_vertices, compute its barycentric coordinates for vertex
 						// attribute interpolation.
