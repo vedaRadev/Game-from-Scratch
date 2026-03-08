@@ -428,6 +428,11 @@ typedef struct TGA_Header {
 // The value returned by this function is the same as the 2D "cross product" of
 // vectors (p - v0) and (v1 - v0) and the determinant of the 2D matrix formed by
 // the same two vectors.
+// NOTE(mal): Also see https://en.wikipedia.org/wiki/Shoelace_formula (found in
+// https://jtsorlinis.github.io/rendering-tutorial/0)
+// NOTE(mal): From "Conservative and Tiled Rasterization Using a Modified Triangle Setup"
+// by Akenine-Moller T. and T. Aila, the edge function e(S) of a line PQ is 
+// Epq(S) = (-(Qy - Py), Qx - Px) dot (S - P) = n dot (S - P) = (n dot s) + c
 float edge_function(float v0x, float v0y, float v1x, float v1y, float px, float py) {
 	float result = (px - v0x) * (v1y - v0y) - (py - v0y) * (v1x - v0x);
 	return result;
@@ -842,6 +847,11 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 				? (triangle[0].position.y < triangle[2].position.y ? triangle[0].position.y : triangle[2].position.y)
 				: (triangle[1].position.y < triangle[2].position.y ? triangle[1].position.y : triangle[2].position.y);
 
+			// if (xmin < 0) xmin = 0;
+			// if (xmax > offscreen_buffer->width) xmax = offscreen_buffer->width;
+			// if (ymin < 0) ymin = 0;
+			// if (ymax > offscreen_buffer->height) ymax = offscreen_buffer->height;
+
 			ASSERT(xmin >= 0);
 			ASSERT(xmax <= offscreen_buffer->width);
 			ASSERT(ymin >= 0);
@@ -864,6 +874,14 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 				);
 				continue;
 			}
+
+			//////////////////////////////
+			// TRIANGLE SETUP
+			//////////////////////////////
+
+			// TODO(mal): Set up for tiled rasterization
+			// https://fileadmin.cs.lth.se/graphics/research/papers/2005/cr/conservative.pdf
+			// Also see "Realtime Rendering" p996
 
 			// NOTE(mal): Avoiding per-pixel edge function computation. This should be possible because the
 			// edge function is linear. Thus,
@@ -896,15 +914,16 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 			float d_w1_row = (triangle[2].position.x - triangle[0].position.x);
 			float d_w2_row = (triangle[0].position.x - triangle[1].position.x);
 
+			//////////////////////////////
+			// RASTERIZATION
+			//////////////////////////////
+
 			for (int row = ymin; row < ymax; row++) {
 				float w0 = w0_row;
 				float w1 = w1_row;
 				float w2 = w2_row;
 				for (int col = xmin; col < xmax; col++) {
 					if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
-						// If p was inside the triangle_vertices, compute its barycentric coordinates for vertex
-						// attribute interpolation.
-
 						// TODO(mal): Rename some of this stuff. Names are taken from Realtime
 						// Rendering. See p1000 for perspective-correct barycentric interpolation.
 						// I believe here we're essentially foreshortening our barycentric coordinates.
