@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
 
 typedef enum PointerEventMask {
 	POINTER_EVENT_ENTER         = 1 << 0,
@@ -1031,7 +1032,22 @@ int main() {
 			game_offscreen_buffer.height          = client_state.buffer_height;
 			game_offscreen_buffer.bytes_per_pixel = client_state.bytes_per_pixel;
 
+			struct timespec render_time_start;
+			clock_gettime(CLOCK_MONOTONIC_RAW, &render_time_start);
+
 			game_code.game_render(&game_memory, &game_offscreen_buffer);
+			
+			struct timespec render_time_end;
+			clock_gettime(CLOCK_MONOTONIC_RAW, &render_time_end);
+
+			float render_time_ms =
+				(render_time_end.tv_sec - render_time_start.tv_sec) * 1000.0f
+				+ (render_time_end.tv_nsec - render_time_start.tv_nsec) / 1e6f;
+			// NOTE(mal): The following isn't _really_ a measure of FPS since it doesn't account for
+			// the fact that we might have previously run an update this game loop and all that
+			// jazz. Maybe figure out a way to actually measure that real FPS some time.
+			uint32_t projected_fps = (1.0f / render_time_ms * 1000.0f);
+			printf("Render time ms: %f, (fake) fps: %d\n", render_time_ms, projected_fps);
 
 			// Request a new callback
 			// IMPORTANT(mal): We have to request a surface frame BEFORE we commit the surface!
