@@ -431,10 +431,30 @@ typedef struct TGA_Header {
 // NOTE(mal): Also see https://en.wikipedia.org/wiki/Shoelace_formula (found in
 // https://jtsorlinis.github.io/rendering-tutorial/0)
 // NOTE(mal): From "Conservative and Tiled Rasterization Using a Modified Triangle Setup"
-// by Akenine-Moller T. and T. Aila, the edge function e(S) of a line PQ is 
-// Epq(S) = (-(Qy - Py), Qx - Px) dot (S - P) = n dot (S - P) = (n dot s) + c
+// by Akenine-Moller T. and T. Aila, the edge function e(S) of a line PQ testing point S
+// (For CCW ordering with +x right +y up):
+//    Epq(S) = (-(Qy - Py), Qx - Px) dot (S - P) = n dot (S - P) = (n dot s) + c
+// Expanding
+//    Epq(S) = -(Qy - Py) * (Sx - Px) + (Qx - Px) * (Sy - Py)
+//           = (Qx - Px) * (Sy - Py) - (Qy - Py) * (Sx - Px)
+// However for our case where we have CW +Y down:
+// The normal vector flips because it is a pseudovector (axial vector). The normal
+// of our edge vector for CW +Y down is formed by rotating the edge vector -90
+// degrees (basically negate the CCW +Y up normal).
+// Thus we have
+//    Epq = (Qy - Py, -(Qx - Px)) dot (S - P)
+//        = (Qy - Py) * (Sx - Px) + -(Qx - Px) * (Sy - Py)
+//        = (Qy - Py) * (Sx - Px) - (Qx - Px) * (Sy - Py)
+// Which exactly matches our edge function below.
 float edge_function(float v0x, float v0y, float v1x, float v1y, float px, float py) {
-	float result = (px - v0x) * (v1y - v0y) - (py - v0y) * (v1x - v0x);
+	float result = (v1y - v0y) * (px - v0x) - (v1x - v0x) * (py - v0y);
+	return result;
+}
+// nx, ny - edge normal N
+// sx, sy - test point S
+// c - precomputed value = (-N dot edge_start_vertex)
+float edge_function_2(float nx, float ny, float sx, float sy, float c) {
+	float result = (nx * sx + ny * sy) + c;
 	return result;
 }
 
@@ -617,7 +637,7 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 
 	float vert_fov = DEGREES_TO_RADIANS(90.0f);
 	float near = 1.0f;
-	float far = 100.0f;
+	float far = 200.0f;
 	float aspect_ratio = (float)offscreen_buffer->width / (float)offscreen_buffer->height;
 
 	// NOTE(mal): d here is the distance from view origin to the plane onto which we're projecting
@@ -704,10 +724,12 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 
 	uint32_t *pixels = (uint32_t *)offscreen_buffer->memory;
 
+	#define CLEAR_COLOR 0x00440011
+	// #define CLEAR_COLOR 0x00CC5500
 	// TODO(mal): remove, temporary background clear color
 	for (int r = 0; r < offscreen_buffer->height; r++) {
 		for (int c = 0; c < offscreen_buffer->width; c++) {
-			pixels[c + r * offscreen_buffer->width] = 0x00440011;
+			pixels[c + r * offscreen_buffer->width] = CLEAR_COLOR;
 		}
 	}
 
@@ -810,6 +832,8 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 			// we're about to screw up by transforming from homogenous clip --> NDC --> screen.
 			// TODO(mal): Stop copying, but then also need to make sure that we don't update the
 			// same vertices over and over again with perspective divides!
+			// OR maybe just change the edge function to assume CCW order instead of CW? Then we
+			// don't have to change the order of our vertices here.
 			Vertex triangle[3] = { clipped_vertices[i], clipped_vertices[i - 1], clipped_vertices[triangle_fan_center_index] };
 			float reciprocal_depth[3];
 			for (int i = 0; i < 3; i++) {
@@ -830,32 +854,32 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 			// every time regardless of the size of the triangle.
 			// TODO(mal): Maybe create to_vec3_max(Vec3 a, Vec3 b) and to_vec3_min(Vec3 a, Vec3 b)
 			// functions and call those here instead?
-			int xmax =
+			int triangle_xmax =
 				triangle[0].position.x > triangle[1].position.x
 				? (triangle[0].position.x > triangle[2].position.x ? triangle[0].position.x : triangle[2].position.x)
 				: (triangle[1].position.x > triangle[2].position.x ? triangle[1].position.x : triangle[2].position.x);
-			int xmin =
+			int triangle_xmin =
 				triangle[0].position.x < triangle[1].position.x
 				? (triangle[0].position.x < triangle[2].position.x ? triangle[0].position.x : triangle[2].position.x)
 				: (triangle[1].position.x < triangle[2].position.x ? triangle[1].position.x : triangle[2].position.x);
-			int ymax =
+			int triangle_ymax =
 				triangle[0].position.y > triangle[1].position.y
 				? (triangle[0].position.y > triangle[2].position.y ? triangle[0].position.y : triangle[2].position.y)
 				: (triangle[1].position.y > triangle[2].position.y ? triangle[1].position.y : triangle[2].position.y);
-			int ymin =
+			int triangle_ymin =
 				triangle[0].position.y < triangle[1].position.y
 				? (triangle[0].position.y < triangle[2].position.y ? triangle[0].position.y : triangle[2].position.y)
 				: (triangle[1].position.y < triangle[2].position.y ? triangle[1].position.y : triangle[2].position.y);
 
-			// if (xmin < 0) xmin = 0;
-			// if (xmax > offscreen_buffer->width) xmax = offscreen_buffer->width;
-			// if (ymin < 0) ymin = 0;
-			// if (ymax > offscreen_buffer->height) ymax = offscreen_buffer->height;
+			// if (triangle_xmin < 0) triangle_xmin = 0;
+			// if (triangle_xmax > offscreen_buffer->width) triangle_xmax = offscreen_buffer->width;
+			// if (triangle_ymin < 0) triangle_ymin = 0;
+			// if (triangle_ymax > offscreen_buffer->height) triangle_ymax = offscreen_buffer->height;
 
-			ASSERT(xmin >= 0);
-			ASSERT(xmax <= offscreen_buffer->width);
-			ASSERT(ymin >= 0);
-			ASSERT(ymax <= offscreen_buffer->height);
+			ASSERT(triangle_xmin >= 0);
+			ASSERT(triangle_xmax <= offscreen_buffer->width);
+			ASSERT(triangle_ymin >= 0);
+			ASSERT(triangle_ymax <= offscreen_buffer->height);
 
 			// NOTE(mal): Does NOT account for winding order so at the moment we always render even if
 			// the triange is facing away from us.
@@ -879,10 +903,49 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 			// TRIANGLE SETUP
 			//////////////////////////////
 
+			// Compute the topleft points of the tiles at the extremities
+			// (the topleft-most tile and the bottomright-most tile) of our
+			// triangle's AABB.
+			// NOTE(mal): MUST be powers of 2!
+			const int RASTER_TILE_WIDTH  = 16;
+			const int RASTER_TILE_HEIGHT = 16;
+			int topleft_raster_tile_topleft_x     = triangle_xmin - (triangle_xmin & (RASTER_TILE_WIDTH  - 1));
+			int topleft_raster_tile_topleft_y     = triangle_ymin - (triangle_ymin & (RASTER_TILE_HEIGHT - 1));
+			int bottomright_raster_tile_topleft_x = triangle_xmax - (triangle_xmax & (RASTER_TILE_WIDTH  - 1));
+			int bottomright_raster_tile_topleft_y = triangle_ymax - (triangle_ymax & (RASTER_TILE_HEIGHT - 1));
+
 			// TODO(mal): Set up for tiled rasterization
 			// https://fileadmin.cs.lth.se/graphics/research/papers/2005/cr/conservative.pdf
 			// Also see "Realtime Rendering" p996
 
+			// Setting up per-edge values
+
+			// edge v0 to v1
+			float edge_v0_to_v1_normal_x =   triangle[1].position.y - triangle[0].position.y;
+			float edge_v0_to_v1_normal_y = -(triangle[1].position.x - triangle[0].position.x);
+			float edge_v0_to_v1_c =
+				// -N dot edge_start_vertex
+				  (-edge_v0_to_v1_normal_x * triangle[0].position.x)
+				+ (-edge_v0_to_v1_normal_y * triangle[0].position.y);
+
+			// edge v1 to v2
+			float edge_v1_to_v2_normal_x =   triangle[2].position.y - triangle[1].position.y;
+			float edge_v1_to_v2_normal_y = -(triangle[2].position.x - triangle[1].position.x);
+			float edge_v1_to_v2_c =
+				  (-edge_v1_to_v2_normal_x * triangle[1].position.x)
+				+ (-edge_v1_to_v2_normal_y * triangle[1].position.y);
+
+			// edge v2 to v0
+			float edge_v2_to_v0_normal_x =   triangle[0].position.y - triangle[2].position.y;
+			float edge_v2_to_v0_normal_y = -(triangle[0].position.x - triangle[2].position.x);
+			float edge_v2_to_v0_c =
+				  (-edge_v2_to_v0_normal_x * triangle[2].position.x)
+				+ (-edge_v2_to_v0_normal_y * triangle[2].position.y);
+
+			// NOTE(mal): The barycentric weight for a given vertex in the triangle is related to
+			// the area of the subtriangle defined by the test point p and the edge OPPOSITE the
+			// given vertex.
+			//
 			// NOTE(mal): Avoiding per-pixel edge function computation. This should be possible because the
 			// edge function is linear. Thus,
 			// E(x + 1, y) = E(x, y) + dY
@@ -892,10 +955,30 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 			// at chapter "Avoiding Computing the Edge Function Per-Pixel".
 			//
 			// Prime our linear stepping with weights using point at topleft of the triangle's bounding box.
-			Vec3 p = { .x = (float)xmin + 0.5f, .y = (float)ymin + 0.5f }; // test pixel center
-			float w0_row = edge_function(triangle[1].position.x, triangle[1].position.y, triangle[2].position.x, triangle[2].position.y, p.x, p.y);
-			float w1_row = edge_function(triangle[2].position.x, triangle[2].position.y, triangle[0].position.x, triangle[0].position.y, p.x, p.y);
-			float w2_row = edge_function(triangle[0].position.x, triangle[0].position.y, triangle[1].position.x, triangle[1].position.y, p.x, p.y);
+			Vec3 p = { .x = (float)triangle_xmin + 0.5f, .y = (float)triangle_ymin + 0.5f }; // test pixel center
+			float w0_row = edge_function_2(
+				edge_v1_to_v2_normal_x, edge_v1_to_v2_normal_y,
+				p.x, p.y,
+				edge_v1_to_v2_c
+			);
+			float d_w0_col = edge_v1_to_v2_normal_x;
+			float d_w0_row = edge_v1_to_v2_normal_y;
+
+			float w1_row = edge_function_2(
+				edge_v2_to_v0_normal_x, edge_v2_to_v0_normal_y,
+				p.x, p.y,
+				edge_v2_to_v0_c
+			);
+			float d_w1_col = edge_v2_to_v0_normal_x;
+			float d_w1_row = edge_v2_to_v0_normal_y;
+
+			float w2_row = edge_function_2(
+				edge_v0_to_v1_normal_x, edge_v0_to_v1_normal_y,
+				p.x, p.y,
+				edge_v0_to_v1_c
+			);
+			float d_w2_col = edge_v0_to_v1_normal_x;
+			float d_w2_row = edge_v0_to_v1_normal_y;
 
 			// Constant weight deltas for horizontal and vertical steps
 			//
@@ -907,22 +990,41 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 			// px(v1y - v0y) - v0x*v1y + py(-v1x + v0x) + v0y*v1x
 			// px(v1y - v0y) + py(v0x - v1x) - v0x*v1y + v0y*v1x
 			// The term multiplying px is the column delta and the term multiplying py is the row delta.
-			float d_w0_col = (triangle[2].position.y - triangle[1].position.y);
-			float d_w1_col = (triangle[0].position.y - triangle[2].position.y);
-			float d_w2_col = (triangle[1].position.y - triangle[0].position.y);
-			float d_w0_row = (triangle[1].position.x - triangle[2].position.x);
-			float d_w1_row = (triangle[2].position.x - triangle[0].position.x);
-			float d_w2_row = (triangle[0].position.x - triangle[1].position.x);
+			// NOTE(mal): These are the components of our edge normal vectors!
+			// float d_w0_col = (triangle[2].position.y - triangle[1].position.y);
+			// float d_w0_row = (triangle[1].position.x - triangle[2].position.x);
+			// float d_w1_col = (triangle[0].position.y - triangle[2].position.y);
+			// float d_w1_row = (triangle[2].position.x - triangle[0].position.x);
+			// float d_w2_col = (triangle[1].position.y - triangle[0].position.y);
+			// float d_w2_row = (triangle[0].position.x - triangle[1].position.x);
 
 			//////////////////////////////
 			// RASTERIZATION
 			//////////////////////////////
 
-			for (int row = ymin; row < ymax; row++) {
+			/*
+			// TODO(mal): finish tiled rasterization
+			for (
+				int raster_tile_topleft_y = topleft_raster_tile_topleft_y;
+				raster_tile_topleft_y <= bottomright_raster_tile_topleft_y;
+				raster_tile_topleft_y += RASTER_TILE_HEIGHT
+			)
+			{
+				for (
+					int raster_tile_topleft_x = topleft_raster_tile_topleft_x;
+					raster_tile_topleft_x <= bottomright_raster_tile_topleft_x;
+					raster_tile_topleft_x += RASTER_TILE_WIDTH
+				)
+				{
+				}
+			}
+			*/
+
+			for (int row = triangle_ymin; row < triangle_ymax; row++) {
 				float w0 = w0_row;
 				float w1 = w1_row;
 				float w2 = w2_row;
-				for (int col = xmin; col < xmax; col++) {
+				for (int col = triangle_xmin; col < triangle_xmax; col++) {
 					if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
 						// TODO(mal): Rename some of this stuff. Names are taken from Realtime
 						// Rendering. See p1000 for perspective-correct barycentric interpolation.
@@ -1004,7 +1106,7 @@ EXPORT void game_update(GameMemory *memory, GameInput *input) {
 	if (game_state->rotation_y_degrees > 180.0f) game_state->rotation_y_degrees -= 360.0f;
 	if (game_state->rotation_y_degrees < 180.0f) game_state->rotation_y_degrees += 360.0f;
 
-	const float move_speed = 0.1f;
+	const float move_speed = 1.0f;
 
 	if (input->keys[GAME_KEY_W].is_down) game_state->camera_world_position.z += move_speed;
 	if (input->keys[GAME_KEY_S].is_down) game_state->camera_world_position.z -= move_speed;
