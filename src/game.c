@@ -6,6 +6,9 @@
 #include <math.h>
 #include "platform.h"
 // NOTE(mal): Only on Linux, probably wrap this in a #if (something)
+// Actually there should be no platform-specific anything in the game layer.
+// All platform-specific behavior should be accessed via the interface that's passed
+// to the game layer (at the moment, through the GameMemory param).
 #include <stdlib.h> // for abs at the moment
 #include <string.h>
 
@@ -786,8 +789,8 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 		Vertex *input = clip_buffer_a;
 		Vertex *output = clip_buffer_b;
 		size_t input_count, output_count;
-		#define SWAP_POINTERS(a, b) {\
-			void *tmp = (a);\
+		#define SWAP_POINTERS(Type, a, b) {\
+			Type *tmp = (a);\
 			(a) = (b);\
 			(b) = tmp;\
 		}
@@ -799,23 +802,23 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 		input_count  = 3;
 		output_count = clip_sutherland_hodgeman(0, -1, input, input_count, output);
 		// clip -x
-		SWAP_POINTERS(input, output);
+		SWAP_POINTERS(Vertex, input, output);
 		input_count  = output_count;
 		output_count = clip_sutherland_hodgeman(0, +1, input, input_count, output);
 		// clip +y
-		SWAP_POINTERS(input, output);
+		SWAP_POINTERS(Vertex, input, output);
 		input_count  = output_count;
 		output_count = clip_sutherland_hodgeman(1, -1, input, input_count, output);
 		// clip -y
-		SWAP_POINTERS(input, output);
+		SWAP_POINTERS(Vertex, input, output);
 		input_count  = output_count;
 		output_count = clip_sutherland_hodgeman(1, +1, input, input_count, output);
 		// clip +z
-		SWAP_POINTERS(input, output);
+		SWAP_POINTERS(Vertex, input, output);
 		input_count  = output_count;
 		output_count = clip_sutherland_hodgeman(2, -1, input, input_count, output);
 		// clip -z
-		SWAP_POINTERS(input, output);
+		SWAP_POINTERS(Vertex, input, output);
 		input_count  = output_count;
 		output_count = clip_sutherland_hodgeman(2, +1, input, input_count, output);
 		
