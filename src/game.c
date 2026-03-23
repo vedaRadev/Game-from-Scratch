@@ -953,57 +953,43 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 			// https://www.cs.drexel.edu/~deb39/Classes/Papers/comp175-06-pineda.pdf
 			// Taking the algorithm for stepping from here: https://www.youtube.com/watch?v=k5wtuKWmV48
 			// at chapter "Avoiding Computing the Edge Function Per-Pixel".
-			//
-			// Prime our linear stepping with weights using point at topleft of the triangle's bounding box.
-			Vec3 p = { .x = (float)triangle_xmin + 0.5f, .y = (float)triangle_ymin + 0.5f }; // test pixel center
-			float w0_row = edge_function_2(
-				edge_v1_to_v2_normal_x, edge_v1_to_v2_normal_y,
-				p.x, p.y,
-				edge_v1_to_v2_c
-			);
+
+			// Edge v1_v2
 			float d_w0_col = edge_v1_to_v2_normal_x;
 			float d_w0_row = edge_v1_to_v2_normal_y;
+			Vec2 raster_tile_offset_edge_v1_to_v2 = {
+				.x = edge_v1_to_v2_normal_x < 0 ? 0 : RASTER_TILE_WIDTH,
+				.y = edge_v1_to_v2_normal_y < 0 ? 0 : RASTER_TILE_HEIGHT
+			};
 
-			float w1_row = edge_function_2(
-				edge_v2_to_v0_normal_x, edge_v2_to_v0_normal_y,
-				p.x, p.y,
-				edge_v2_to_v0_c
-			);
+			// Edge v2_v0
 			float d_w1_col = edge_v2_to_v0_normal_x;
 			float d_w1_row = edge_v2_to_v0_normal_y;
+			Vec2 raster_tile_offset_edge_v2_to_v0 = {
+				.x = edge_v2_to_v0_normal_x < 0 ? 0 : RASTER_TILE_WIDTH,
+				.y = edge_v2_to_v0_normal_y < 0 ? 0 : RASTER_TILE_HEIGHT
+			};
 
-			float w2_row = edge_function_2(
-				edge_v0_to_v1_normal_x, edge_v0_to_v1_normal_y,
-				p.x, p.y,
-				edge_v0_to_v1_c
-			);
+			// Edge v0_v1
 			float d_w2_col = edge_v0_to_v1_normal_x;
 			float d_w2_row = edge_v0_to_v1_normal_y;
-
-			// Constant weight deltas for horizontal and vertical steps
-			//
-			// From my edge function, given how I set it up:
-			// (px - v0x) * (v1y - v0y) - (py - v0y) * (v1x - v0x)
-			// (px*v1y - px*v0y -v0x*v1y + v0x*v0y) - (py*v1x - py*v0x - v0y*v1x + v0y*v0x)
-			// px*v1y - px*v0y - v0x*v1y + v0x*v0y - py*v1x + py*v0x + v0y*v1x - v0y*v0x
-			// px*v1y - px*v0y - v0x*v1y - py*v1x + py*v0x + v0y*v1x
-			// px(v1y - v0y) - v0x*v1y + py(-v1x + v0x) + v0y*v1x
-			// px(v1y - v0y) + py(v0x - v1x) - v0x*v1y + v0y*v1x
-			// The term multiplying px is the column delta and the term multiplying py is the row delta.
-			// NOTE(mal): These are the components of our edge normal vectors!
-			// float d_w0_col = (triangle[2].position.y - triangle[1].position.y);
-			// float d_w0_row = (triangle[1].position.x - triangle[2].position.x);
-			// float d_w1_col = (triangle[0].position.y - triangle[2].position.y);
-			// float d_w1_row = (triangle[2].position.x - triangle[0].position.x);
-			// float d_w2_col = (triangle[1].position.y - triangle[0].position.y);
-			// float d_w2_row = (triangle[0].position.x - triangle[1].position.x);
+			Vec2 raster_tile_offset_edge_v0_to_v1 = {
+				.x = edge_v0_to_v1_normal_x < 0 ? 0 : RASTER_TILE_WIDTH,
+				.y = edge_v0_to_v1_normal_y < 0 ? 0 : RASTER_TILE_HEIGHT
+			};
 
 			//////////////////////////////
-			// RASTERIZATION
+			// RASTERIZATION (TILED)
 			//////////////////////////////
+			// TODO(mal): For future optimization, might be able to add another layer of tiling and
+			// then apply vectorization.
+			// See https://www.cs.cmu.edu/afs/cs/academic/class/15869-f11/www/readings/abrash09_lrbrast.pdf
+			//     ^^^ Michael Abrash on the Larabee rasterizer.
+			// It also has a great (implicit) explanation of what our barycentric weight deltas
+			// actually are. (If I understand right, those values are just the amounts that the
+			// edge function changes when stepping by some amount in the given direction (i.e.
+			// +row, +col)).
 
-			/*
-			// TODO(mal): finish tiled rasterization
 			for (
 				int raster_tile_topleft_y = topleft_raster_tile_topleft_y;
 				raster_tile_topleft_y <= bottomright_raster_tile_topleft_y;
@@ -1016,62 +1002,109 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 					raster_tile_topleft_x += RASTER_TILE_WIDTH
 				)
 				{
-				}
-			}
-			*/
+					int is_tile_inside_v1_v2 = edge_function_2(
+						edge_v1_to_v2_normal_x, edge_v1_to_v2_normal_y,
+						raster_tile_topleft_x + raster_tile_offset_edge_v1_to_v2.x,
+						raster_tile_topleft_y + raster_tile_offset_edge_v1_to_v2.y,
+						edge_v1_to_v2_c
+					) >= 0;
 
-			for (int row = triangle_ymin; row < triangle_ymax; row++) {
-				float w0 = w0_row;
-				float w1 = w1_row;
-				float w2 = w2_row;
-				for (int col = triangle_xmin; col < triangle_xmax; col++) {
-					if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
-						// TODO(mal): Rename some of this stuff. Names are taken from Realtime
-						// Rendering. See p1000 for perspective-correct barycentric interpolation.
-						// I believe here we're essentially foreshortening our barycentric coordinates.
-						float f0 = w0 * reciprocal_depth[0];
-						float f1 = w1 * reciprocal_depth[1];
-						float f2 = w2 * reciprocal_depth[2];
-						float perspective_reciprocal_area = 1.0f / (f0 + f1 + f2);
+					int is_tile_inside_v2_v0 = edge_function_2(
+						edge_v2_to_v0_normal_x, edge_v2_to_v0_normal_y,
+						raster_tile_topleft_x + raster_tile_offset_edge_v2_to_v0.x,
+						raster_tile_topleft_y + raster_tile_offset_edge_v2_to_v0.y,
+						edge_v2_to_v0_c
+					) >= 0;
 
-						// TEXTURING
-						float tx_u = (f0 * triangle[0].tx_u + f1 * triangle[1].tx_u + f2 * triangle[2].tx_u) * perspective_reciprocal_area;
-						float tx_v = (f0 * triangle[0].tx_v + f1 * triangle[1].tx_v + f2 * triangle[2].tx_v) * perspective_reciprocal_area;
-						unsigned tx_x = (unsigned)(tx_u * game_state->texture_width);
-						unsigned tx_y = (unsigned)(tx_v * game_state->texture_height);
-						unsigned texel_index = tx_x + tx_y * game_state->texture_width;
-						// FIXME(mal): Need to detect machine's endianness and extract the bits
-						// properly. Check the 32-bit color format of TGA (or any other texture
-						// file we may load). I believe it's BGRA.
-						uint32_t texel_tga_color = game_state->texture_pixels[texel_index];
-						uint8_t  texel_red       = (texel_tga_color & 0x00FF0000) >> 16;
-						uint8_t  texel_green     = (texel_tga_color & 0x0000FF00) >> 8;
-						uint8_t  texel_blue      = texel_tga_color & 0x000000FF;
-						uint32_t texel_color     = (texel_red << 16) | (texel_green << 8) | texel_blue;
-						pixels[col + row * offscreen_buffer->width] = texel_color;
+					int is_tile_inside_v0_v1 = edge_function_2(
+						edge_v0_to_v1_normal_x, edge_v0_to_v1_normal_y,
+						raster_tile_topleft_x + raster_tile_offset_edge_v0_to_v1.x,
+						raster_tile_topleft_y + raster_tile_offset_edge_v0_to_v1.y,
+						edge_v0_to_v1_c
+					) >= 0;
 
-						// #define U32_R8(x) (((x) & (0xFF << 16)) >> 16)
-						// #define U32_G8(x) (((x) & (0xFF << 8)) >> 8)
-						// #define U32_B8(x) ((x) & 0xFF)
-						// uint8_t color_red   = (f0 * U32_R8(vs[0].color) + f1 * U32_R8(vs[1].color) + f2 * U32_R8(vs[2].color)) * perspective_reciprocal_area;
-						// uint8_t color_green = (f0 * U32_G8(vs[0].color) + f1 * U32_G8(vs[1].color) + f2 * U32_G8(vs[2].color)) * perspective_reciprocal_area;
-						// uint8_t color_blue  = (f0 * U32_B8(vs[0].color) + f1 * U32_B8(vs[1].color) + f2 * U32_B8(vs[2].color)) * perspective_reciprocal_area;
-						// pixels[col + row * offscreen_buffer->width] =
-						// 	color_red << 16
-						// 	| color_green << 8
-						// 	| color_blue;
+					if (is_tile_inside_v1_v2 && is_tile_inside_v2_v0 && is_tile_inside_v0_v1) {
+						float w0_row = edge_function_2(
+							edge_v1_to_v2_normal_x, edge_v1_to_v2_normal_y,
+							raster_tile_topleft_x + 0.5f, raster_tile_topleft_y + 0.5f,
+							edge_v1_to_v2_c
+						);
+						float w1_row = edge_function_2(
+							edge_v2_to_v0_normal_x, edge_v2_to_v0_normal_y,
+							raster_tile_topleft_x + 0.5f, raster_tile_topleft_y + 0.5f,
+							edge_v2_to_v0_c
+						);
+						float w2_row = edge_function_2(
+							edge_v0_to_v1_normal_x, edge_v0_to_v1_normal_y,
+							raster_tile_topleft_x + 0.5f, raster_tile_topleft_y + 0.5f,
+							edge_v0_to_v1_c
+						);
 
+						int raster_tile_min_x = raster_tile_topleft_x;
+						int raster_tile_max_x = raster_tile_min_x + RASTER_TILE_WIDTH;
+						if (raster_tile_max_x >= offscreen_buffer->width) raster_tile_max_x = offscreen_buffer->width;
+
+						int raster_tile_min_y = raster_tile_topleft_y;
+						int raster_tile_max_y = raster_tile_min_y + RASTER_TILE_HEIGHT;
+						if (raster_tile_max_y >= offscreen_buffer->height) raster_tile_max_y = offscreen_buffer->height;
+
+						// Loop over the pixels in the tile
+						for (int row = raster_tile_min_y; row < raster_tile_max_y; row++) {
+							float w0 = w0_row;
+							float w1 = w1_row;
+							float w2 = w2_row;
+							for (int col = raster_tile_min_x; col < raster_tile_max_x; col++) {
+								if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
+									// TODO(mal): Rename some of this stuff. Names are taken from Realtime
+									// Rendering. See p1000 for perspective-correct barycentric interpolation.
+									// I believe here we're essentially foreshortening our barycentric coordinates.
+									float f0 = w0 * reciprocal_depth[0];
+									float f1 = w1 * reciprocal_depth[1];
+									float f2 = w2 * reciprocal_depth[2];
+									float perspective_reciprocal_area = 1.0f / (f0 + f1 + f2);
+
+									// TEXTURING
+									float tx_u = (f0 * triangle[0].tx_u + f1 * triangle[1].tx_u + f2 * triangle[2].tx_u) * perspective_reciprocal_area;
+									float tx_v = (f0 * triangle[0].tx_v + f1 * triangle[1].tx_v + f2 * triangle[2].tx_v) * perspective_reciprocal_area;
+									unsigned tx_x = (unsigned)(tx_u * game_state->texture_width);
+									unsigned tx_y = (unsigned)(tx_v * game_state->texture_height);
+									unsigned texel_index = tx_x + tx_y * game_state->texture_width;
+									// FIXME(mal): Need to detect machine's endianness and extract the bits
+									// properly. Check the 32-bit color format of TGA (or any other texture
+									// file we may load). I believe it's BGRA.
+									uint32_t texel_tga_color = game_state->texture_pixels[texel_index];
+									uint8_t  texel_red       = (texel_tga_color & 0x00FF0000) >> 16;
+									uint8_t  texel_green     = (texel_tga_color & 0x0000FF00) >> 8;
+									uint8_t  texel_blue      = texel_tga_color & 0x000000FF;
+									uint32_t texel_color     = (texel_red << 16) | (texel_green << 8) | texel_blue;
+									pixels[col + row * offscreen_buffer->width] = texel_color;
+
+									// #define U32_R8(x) (((x) & (0xFF << 16)) >> 16)
+									// #define U32_G8(x) (((x) & (0xFF << 8)) >> 8)
+									// #define U32_B8(x) ((x) & 0xFF)
+									// uint8_t color_red   = (f0 * U32_R8(vs[0].color) + f1 * U32_R8(vs[1].color) + f2 * U32_R8(vs[2].color)) * perspective_reciprocal_area;
+									// uint8_t color_green = (f0 * U32_G8(vs[0].color) + f1 * U32_G8(vs[1].color) + f2 * U32_G8(vs[2].color)) * perspective_reciprocal_area;
+									// uint8_t color_blue  = (f0 * U32_B8(vs[0].color) + f1 * U32_B8(vs[1].color) + f2 * U32_B8(vs[2].color)) * perspective_reciprocal_area;
+									// pixels[col + row * offscreen_buffer->width] =
+									// 	color_red << 16
+									// 	| color_green << 8
+									// 	| color_blue;
+
+								}
+
+								w0 += d_w0_col;
+								w1 += d_w1_col;
+								w2 += d_w2_col;
+							}
+
+							w0_row += d_w0_row;
+							w1_row += d_w1_row;
+							w2_row += d_w2_row;
+						}
 					}
-
-					w0 += d_w0_col;
-					w1 += d_w1_col;
-					w2 += d_w2_col;
 				}
-
-				w0_row += d_w0_row;
-				w1_row += d_w1_row;
-				w2_row += d_w2_row;
 			}
+
 		}
 	}
 }
