@@ -26,18 +26,14 @@ inline float degrees_to_radians(float degrees) {
 // TODO(mal): Some of the Mat4x4 and Mat3x3 ops are very similar in implementation. Is there a way
 // to semantically compress that code?
 
-typedef struct Vec2 {
-	union {
-		float elements[2];
-		struct { float x; float y; };
-	};
+typedef union Vec2 {
+	float elements[2];
+	struct { float x; float y; };
 } Vec2;
 
-typedef struct Vec3 {
-	union {
-		float elements[3];
-		struct { float x; float y; float z; };
-	};
+typedef union Vec3 {
+	float elements[3];
+	struct { float x; float y; float z; };
 } Vec3;
 
 // a + b
@@ -99,23 +95,19 @@ Vec3 mult_vec3_scalar(Vec3 v, float s) {
 }
 
 // NOTE(mal): With homogeneous notation, vectors w = 0, points w = 1
-typedef struct Vec4 {
-	union {
-		float elements[4];
-		struct {
-			float x;
-			float y;
-			float z;
-			float w;
-		};
+typedef union Vec4 {
+	float elements[4];
+	struct {
+		float x;
+		float y;
+		float z;
+		float w;
 	};
 } Vec4;
 
-typedef struct Mat3x3 {
-	union {
-		float elements[9];
-		float rows[3][3];
-	};
+typedef union Mat3x3 {
+	float elements[9];
+	float rows[3][3];
 } Mat3x3;
 
 // Let M be 3x3 matrix, V be a 3x1 vector
@@ -233,11 +225,9 @@ Mat3x3 mat3x3_create_rotation_z(float radians) {
 	return result;
 }
 
-typedef struct Mat4x4 {
-	union {
-		float elements[16];
-		float rows[4][4];
-	};
+typedef union Mat4x4 {
+	float elements[16];
+	float rows[4][4];
 } Mat4x4;
 
 inline Mat4x4 mat4x4_identity() {
@@ -642,7 +632,6 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 	float near = 1.0f;
 	float far = 200.0f;
 	float aspect_ratio = (float)offscreen_buffer->width / (float)offscreen_buffer->height;
-
 	// NOTE(mal): d here is the distance from view origin to the plane onto which we're projecting
 	// R3 points down to R2. Its value is really somewhat arbitrary since any point along the view
 	// space z axis will project to the same point on our 2D image plane (given that d > 0... d < 0
@@ -665,65 +654,39 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 	// left and right values of the frustum planes similar to how we're using near and far.
 
 	// Set up OpenGL-style perspective transform matrix
-	Mat4x4 perspective = {};
-	// NOTE(mal): We account for the fact here that pixels aren't necessarily square and that the
-	// horizontal FOV may differ from the vertical FOV.
-	perspective.rows[0][0] = d / aspect_ratio;
-	perspective.rows[0][1] = 0;
-	perspective.rows[0][2] = 0;
-	perspective.rows[0][3] = 0;
-
-	perspective.rows[1][0] = 0;
-	perspective.rows[1][1] = d;
-	perspective.rows[1][2] = 0;
-	perspective.rows[1][3] = 0;
-
-	perspective.rows[2][0] = 0;
-	perspective.rows[2][1] = 0;
-	// Preserving and remapping depth values from [-near, -far] (because we look down -z in RHS view
-	// space) to be [-1, 1].
-	// NOTE(mal): That this does NOT clip or cull vertices! If a vertex depth < near or depth > far
-	// then it just gets assigned an NDC Z value of -1 or 1, respectively.
-	perspective.rows[2][2] = -((far + near) / (far - near));
-	perspective.rows[2][3] = -((2.0f * far * near) / (far - near));
-
-	perspective.rows[3][0] = 0;
-	perspective.rows[3][1] = 0;
-	perspective.rows[3][2] = -1;
-	perspective.rows[3][3] = 0;
+	Mat4x4 perspective = {
+		.rows = {
+			// NOTE(mal): We account for the fact here that pixels aren't necessarily square and that the
+			// horizontal FOV may differ from the vertical FOV.
+			{ d / aspect_ratio, 0, 0,                              0,                                    },
+			{ 0,                d, 0,                              0,                                    },
+			// Map depth [-near, -far] (because we look down -z in RHS view space) to [-1, 1].
+			// NOTE(mal): That this does NOT clip or cull vertices! If a vertex depth < near or depth > far
+			// then it just gets assigned an NDC Z value of -1 or 1, respectively.
+			{ 0,                0, -((far + near) / (far - near)), -((2.0f * far * near) / (far - near)) },
+			{ 0,                0, -1,                             0                                     },
+		}
+	};
 
 	// NDC ranges from [-1, -1] to [1, 1]
 	// We want to map to our screen, which is from [0, 0] to [width, height], and where +y is down
-	Mat4x4 ndc_to_screen = {};
 
 	float half_width = offscreen_buffer->width / 2.0f;
 	float half_height = offscreen_buffer->height / 2.0f;
 	float screen_offset_x = 0.0f;
 	float screen_offset_y = 0.0f;
-
-	ndc_to_screen.rows[0][0] = half_width;
-	ndc_to_screen.rows[0][1] = 0;
-	ndc_to_screen.rows[0][2] = 0;
-	ndc_to_screen.rows[0][3] = half_width + screen_offset_x;
-
-	ndc_to_screen.rows[1][0] = 0;
-	ndc_to_screen.rows[1][1] = -half_height;
-	ndc_to_screen.rows[1][2] = 0;
-	ndc_to_screen.rows[1][3] = (half_height + screen_offset_y);
-
 	// z is a special case since we want to use it for depth testing later.
 	// We want it to range from [0, depth] where depth usually = 1.
 	float depth = 1.0f;
 	float half_depth = depth / 2;
-	ndc_to_screen.rows[2][0] = 0;
-	ndc_to_screen.rows[2][1] = 0;
-	ndc_to_screen.rows[2][2] = half_depth;
-	ndc_to_screen.rows[2][3] = half_depth;
-
-	ndc_to_screen.rows[3][0] = 0;
-	ndc_to_screen.rows[3][1] = 0;
-	ndc_to_screen.rows[3][2] = 0;
-	ndc_to_screen.rows[3][3] = 1;
+	Mat4x4 ndc_to_screen = {
+		.rows = {
+			{ half_width, 0,            0,          half_width + screen_offset_x  },
+			{ 0,          -half_height, 0,          half_height + screen_offset_y },
+			{ 0,          0,            half_depth, half_depth                    },
+			{ 0,          0,            0,          1                             },
+		}
+	};
 
 	uint32_t *pixels = (uint32_t *)offscreen_buffer->memory;
 
