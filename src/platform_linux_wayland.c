@@ -874,8 +874,10 @@ int main() {
 	client_state.xkb_context     = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	client_state.buffer_width    = 800;
 	client_state.buffer_height   = 600;
-	client_state.window_width    = client_state.buffer_width;
-	client_state.window_height   = client_state.buffer_height;
+	// client_state.window_width    = client_state.buffer_width;
+	// client_state.window_height   = client_state.buffer_height;
+	client_state.window_width    = 800;
+	client_state.window_height   = 600;
 	client_state.bytes_per_pixel = 4;
 	client_state.stride          = client_state.buffer_width * client_state.bytes_per_pixel;
 	client_state.nbuffers        = NBUFFERS;

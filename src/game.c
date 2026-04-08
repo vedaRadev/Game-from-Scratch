@@ -377,6 +377,12 @@ typedef struct Square3D {
 	float  scale;
 } Square3D;
 
+typedef enum RenderRasterTileState {
+	RENDER_RASTER_TILES_OFF,
+	RENDER_RASTER_TILES_BELOW,
+	RENDER_RASTER_TILES_ONTOP,
+} RenderRasterTileState;
+
 // TODO(mal): It will be critical in the future to introduce some memory allocators and start
 // using them to store some of the data in here. For example, loaded texture data and whatnot.
 // The backing stores of these allocators will be the rest of our GameMemory.storage excluding
@@ -390,7 +396,9 @@ typedef struct GameState {
 	unsigned texture_width;
 	unsigned texture_height;
 	uint32_t *texture_pixels;
-	int render_wireframe;
+	bool render_wireframe;
+	bool skip_rasterization;
+	RenderRasterTileState render_raster_tile_state;
 } GameState;
 
 // http://www.paulbourke.net/dataformats/tga/
@@ -528,12 +536,31 @@ size_t clip_sutherland_hodgeman(int plane_index, int plane_sign, Vertex *input, 
 	return output_count;
 }
 
+// Our normals assume a CW winding order in a coordinate system where +Y is down.
+// i.e. our normals point inward to our triangles when in screen space.
+// For some reason I couldn't get the standard top-left rule working to not produce gaps, 
+// but this version where we nudge "nudge the bottom and right edges over by a pixel to
+// allow inclusion of pixels that might be along a shared edge there" seems to work.
+// This may cause slight overdraw if surfaces are transparent. Might have to visit later.
+// FIXME(mal): If overdraw on shared edges of transparent polygons, will have to fix this
+// properly by using the true top-left rule. Apparently for the true top-left rule to work,
+// the edge function will have to evaluate to exactly 0.0f for shared pixel edges which only
+// holds when shared vertices are bit-identical. If there's any floating point drift then
+// adding a bias of -1 to non-top-or-right edges will create gaps due to underdrawing.
+float bottom_right_bias(float triangle_edge_nx, float triangle_edge_ny) {
+	bool is_bottom = (triangle_edge_nx == 0.0f) && (triangle_edge_ny < 0.0f);
+	bool is_right  = triangle_edge_nx < 0.0f;
+	float result   = (is_bottom || is_right) ? 1.0f : 0.0f;
+	return result;
+}
+
 EXPORT void game_init(GameMemory *memory, int initial_width, int initial_height) {
 	ASSERT(memory->debug_platform_read_entire_file);
 	ASSERT(memory->debug_platform_free_entire_file);
 
 	GameState *game_state = (GameState *)memory->storage;
 
+	// Square in CW winding order
 	// 0: Square bottom left
 	game_state->square.local_vertices[0] = (Vertex){
 		.position = { .x = -1, .y = -1, .w = 1 },
@@ -546,29 +573,19 @@ EXPORT void game_init(GameMemory *memory, int initial_width, int initial_height)
 		.color = -1,
 		.tx_u = 0.0f, .tx_v = 0.0f,
 	};
-	// 2: Square bottom right
+	// 2: Square top right
 	game_state->square.local_vertices[2] = (Vertex){
-		.position = { .x = 1, .y = -1, .w = 1 },
-		.color = -1,
-		.tx_u = 1.0f, .tx_v = 1.0f,
-	};
-	// 3: Square top right
-	game_state->square.local_vertices[3] = (Vertex){
 		.position = { .x = 1, .y = 1, .w = 1 },
 		.color = -1,
 		.tx_u = 1.0f, .tx_v = 0.0f,
 	};
-
-	// Defining the two triangles making up the square in CW-order
-	// LEFT: 
-	game_state->square.vertex_list[0] = 0;
-	game_state->square.vertex_list[1] = 1;
-	game_state->square.vertex_list[2] = 2;
-	// RIGHT
-	game_state->square.vertex_list[3] = 2;
-	game_state->square.vertex_list[4] = 1;
-	game_state->square.vertex_list[5] = 3;
-
+	// 3: Square bottom right
+	game_state->square.local_vertices[3] = (Vertex){
+		.position = { .x = 1, .y = -1, .w = 1 },
+		.color = -1,
+		.tx_u = 1.0f, .tx_v = 1.0f,
+	};
+	
 	game_state->square.world_position = (Vec3){ .x = 0.0f, .y = 0.0f, .z = 5.0f };
 	game_state->square.scale = 75.0f;
 
@@ -690,394 +707,446 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 
 	uint32_t *pixels = (uint32_t *)offscreen_buffer->memory;
 
-	#define CLEAR_COLOR 0x00440011
-	// #define CLEAR_COLOR 0x00CC5500
-	// TODO(mal): remove, temporary background clear color
+	// NOTE(mal): MUST be powers of 2!
+	const int RASTER_TILE_WIDTH  = 16;
+	const int RASTER_TILE_HEIGHT = 16;
+	#define CLEAR_COLOR 0x00000000
+	#define RASTER_TILE_COLOR 0x00440011
 	for (int r = 0; r < offscreen_buffer->height; r++) {
+		const int row_offset = r * offscreen_buffer->width;
 		for (int c = 0; c < offscreen_buffer->width; c++) {
-			pixels[c + r * offscreen_buffer->width] = CLEAR_COLOR;
-		}
-	}
-
-	Vertex *vertices = game_state->square.local_vertices;
-	int num_vertex_indices = 6;
-	ASSERT(num_vertex_indices % 3 == 0);
-	for (int vertex_list_offset = 0; vertex_list_offset < num_vertex_indices; vertex_list_offset += 3) {
-		// Making copies because I'll be modifying them in-place during the loop iteration.
-		// Not sure if this is the best way to do things but I'll figure that out later.
-		Vertex v0 = vertices[game_state->square.vertex_list[vertex_list_offset]];
-		Vertex v1 = vertices[game_state->square.vertex_list[vertex_list_offset + 1]];
-		Vertex v2 = vertices[game_state->square.vertex_list[vertex_list_offset + 2]];
-
-		// FIXME(mal): Just construct/use/whatever a 4x4 transformation matrix for local_to_world
-
-		// Scaling
-		for (int i = 0; i < 3; i++) v0.position.elements[i] *= game_state->square.scale;
-		for (int i = 0; i < 3; i++) v1.position.elements[i] *= game_state->square.scale;
-		for (int i = 0; i < 3; i++) v2.position.elements[i] *= game_state->square.scale;
-		// Rotating about Y axis
-		{
-			float x, z;
-			float r = DEGREES_TO_RADIANS(game_state->rotation_y_degrees);
-			float sin_r = sin(r), cos_r = cos(r);
-			x = v0.position.x, z = v0.position.z;
-			v0.position.x = z*sin_r + x*cos_r;
-			v0.position.z = z*cos_r - x*sin_r;
-			x = v1.position.x, z = v1.position.z;
-			v1.position.x = z*sin_r + x*cos_r;
-			v1.position.z = z*cos_r - x*sin_r;
-			x = v2.position.x, z = v2.position.z;
-			v2.position.x = z*sin_r + x*cos_r;
-			v2.position.z = z*cos_r - x*sin_r;
-		}
-		// Translating
-		for (int i = 0; i < 3; i++) v0.position.elements[i] += game_state->square.world_position.elements[i];
-		for (int i = 0; i < 3; i++) v1.position.elements[i] += game_state->square.world_position.elements[i];
-		for (int i = 0; i < 3; i++) v2.position.elements[i] += game_state->square.world_position.elements[i];
-
-		// Take vertices world --> view --> homogeneous clip
-		v0.position = mult_mat4x4_vec4(perspective, mult_mat4x4_vec4(world_to_camera, v0.position));
-		v1.position = mult_mat4x4_vec4(perspective, mult_mat4x4_vec4(world_to_camera, v1.position));
-		v2.position = mult_mat4x4_vec4(perspective, mult_mat4x4_vec4(world_to_camera, v2.position));
-
-		//////////////////////////////
-		// BEGIN CLIPPING
-		//////////////////////////////
-
-		// NOTE(mal): I believe that each plane can add at most one generated vertex, which means
-		// that if we start with 3 and clip against 6 frustum planes then we will end up with at
-		// most 9 vertices (7 triangles if we use the fan approach to retriangulate).
-		Vertex clip_buffer_a[9] = { v0, v1, v2 };
-		Vertex clip_buffer_b[9];
-		Vertex *input = clip_buffer_a;
-		Vertex *output = clip_buffer_b;
-		size_t input_count, output_count;
-		#define SWAP_POINTERS(Type, a, b) {\
-			Type *tmp = (a);\
-			(a) = (b);\
-			(b) = tmp;\
-		}
-
-		// clip against the six frustum planes
-		// NOTE(mal): See "Essential Math" 7.4.3 and 7.4.4 about clipping
-
-		// clip +x
-		input_count  = 3;
-		output_count = clip_sutherland_hodgeman(0, -1, input, input_count, output);
-		// clip -x
-		SWAP_POINTERS(Vertex, input, output);
-		input_count  = output_count;
-		output_count = clip_sutherland_hodgeman(0, +1, input, input_count, output);
-		// clip +y
-		SWAP_POINTERS(Vertex, input, output);
-		input_count  = output_count;
-		output_count = clip_sutherland_hodgeman(1, -1, input, input_count, output);
-		// clip -y
-		SWAP_POINTERS(Vertex, input, output);
-		input_count  = output_count;
-		output_count = clip_sutherland_hodgeman(1, +1, input, input_count, output);
-		// clip +z
-		SWAP_POINTERS(Vertex, input, output);
-		input_count  = output_count;
-		output_count = clip_sutherland_hodgeman(2, -1, input, input_count, output);
-		// clip -z
-		SWAP_POINTERS(Vertex, input, output);
-		input_count  = output_count;
-		output_count = clip_sutherland_hodgeman(2, +1, input, input_count, output);
-		
-		Vertex *clipped_vertices     = output;
-		size_t  clipped_vertex_count = output_count;
-
-		//////////////////////////////
-		// END CLIPPING
-		//////////////////////////////
-
-		// Take all clipped vertices from homogeneous clip space --> NDC --> screen
-		// Retain depth values for each vertex.
-		// TODO(mal): Should we just store the depth on the vertex itself?
-		float outer_reciprocal_depth[output_count];
-		for (int i = 0; i < output_count; i++) {
-			// NOTE(mal): After perspective projection and before perspective divide, the w
-			// component IS our view-space Z (depth) coordinate!
-			float reciprocal_w = 1.0f / clipped_vertices[i].position.w;
-			outer_reciprocal_depth[i] = reciprocal_w;
-			// perspective divide: homogeneous clip --> NDC
-			clipped_vertices[i].position.x *= reciprocal_w;
-			clipped_vertices[i].position.y *= reciprocal_w;
-			clipped_vertices[i].position.z *= reciprocal_w;
-			clipped_vertices[i].position.w *= reciprocal_w;
-			// NDC --> screen
-			clipped_vertices[i].position = mult_mat4x4_vec4(ndc_to_screen, clipped_vertices[i].position);
-		}
-
-		size_t triangle_fan_center_index = 0;
-		for (int i = 2; i < clipped_vertex_count; i++) {
-			// Grab our triangle from the fan generated by clipping. Also fix the winding order that
-			// we're about to screw up by transforming from homogenous clip --> NDC --> screen.
-			// TODO(mal): Stop copying, but then also need to make sure that we don't update the
-			// same vertices over and over again with perspective divides!
-			// OR maybe just change the edge function to assume CCW order instead of CW? Then we
-			// don't have to change the order of our vertices here.
-			Vertex triangle[3] = { clipped_vertices[i], clipped_vertices[i - 1], clipped_vertices[triangle_fan_center_index] };
-			float reciprocal_depth[3] = { outer_reciprocal_depth[i], outer_reciprocal_depth[i - 1], outer_reciprocal_depth[triangle_fan_center_index] };
-
-			// Compute the AABB of the triangle so that we don't have to loop over the entire buffer
-			// every time regardless of the size of the triangle.
-			// TODO(mal): Maybe create to_vec3_max(Vec3 a, Vec3 b) and to_vec3_min(Vec3 a, Vec3 b)
-			// functions and call those here instead?
-			int triangle_xmax =
-				triangle[0].position.x > triangle[1].position.x
-				? (triangle[0].position.x > triangle[2].position.x ? triangle[0].position.x : triangle[2].position.x)
-				: (triangle[1].position.x > triangle[2].position.x ? triangle[1].position.x : triangle[2].position.x);
-			int triangle_xmin =
-				triangle[0].position.x < triangle[1].position.x
-				? (triangle[0].position.x < triangle[2].position.x ? triangle[0].position.x : triangle[2].position.x)
-				: (triangle[1].position.x < triangle[2].position.x ? triangle[1].position.x : triangle[2].position.x);
-			int triangle_ymax =
-				triangle[0].position.y > triangle[1].position.y
-				? (triangle[0].position.y > triangle[2].position.y ? triangle[0].position.y : triangle[2].position.y)
-				: (triangle[1].position.y > triangle[2].position.y ? triangle[1].position.y : triangle[2].position.y);
-			int triangle_ymin =
-				triangle[0].position.y < triangle[1].position.y
-				? (triangle[0].position.y < triangle[2].position.y ? triangle[0].position.y : triangle[2].position.y)
-				: (triangle[1].position.y < triangle[2].position.y ? triangle[1].position.y : triangle[2].position.y);
-
-			// if (triangle_xmin < 0) triangle_xmin = 0;
-			// if (triangle_xmax > offscreen_buffer->width) triangle_xmax = offscreen_buffer->width;
-			// if (triangle_ymin < 0) triangle_ymin = 0;
-			// if (triangle_ymax > offscreen_buffer->height) triangle_ymax = offscreen_buffer->height;
-
-			ASSERT(triangle_xmin >= 0);
-			ASSERT(triangle_xmax <= offscreen_buffer->width);
-			ASSERT(triangle_ymin >= 0);
-			ASSERT(triangle_ymax <= offscreen_buffer->height);
-
-			// NOTE(mal): Does NOT account for winding order so at the moment we always render even if
-			// the triange is facing away from us.
-			if (game_state->render_wireframe) {
-				draw_line_2d(
-					pixels, offscreen_buffer->width, offscreen_buffer->height,
-					triangle[0].position.x, triangle[0].position.y, triangle[1].position.x, triangle[1].position.y
-				);
-				draw_line_2d(
-					pixels, offscreen_buffer->width, offscreen_buffer->height,
-					triangle[1].position.x, triangle[1].position.y, triangle[2].position.x, triangle[2].position.y
-				);
-				draw_line_2d(
-					pixels, offscreen_buffer->width, offscreen_buffer->height,
-					triangle[2].position.x, triangle[2].position.y, triangle[0].position.x, triangle[0].position.y
-				);
-				continue;
-			}
-
-			//////////////////////////////
-			// TRIANGLE SETUP
-			//////////////////////////////
-
-			// Compute the topleft points of the tiles at the extremities
-			// (the topleft-most tile and the bottomright-most tile) of our
-			// triangle's AABB.
-			// NOTE(mal): MUST be powers of 2!
-			const int RASTER_TILE_WIDTH  = 16;
-			const int RASTER_TILE_HEIGHT = 16;
-			int topleft_raster_tile_topleft_x     = triangle_xmin - (triangle_xmin & (RASTER_TILE_WIDTH  - 1));
-			int topleft_raster_tile_topleft_y     = triangle_ymin - (triangle_ymin & (RASTER_TILE_HEIGHT - 1));
-			int bottomright_raster_tile_topleft_x = triangle_xmax - (triangle_xmax & (RASTER_TILE_WIDTH  - 1));
-			int bottomright_raster_tile_topleft_y = triangle_ymax - (triangle_ymax & (RASTER_TILE_HEIGHT - 1));
-
-			// TODO(mal): Set up for tiled rasterization
-			// https://fileadmin.cs.lth.se/graphics/research/papers/2005/cr/conservative.pdf
-			// Also see "Realtime Rendering" p996
-
-			// Setting up per-edge values
-
-			// edge v0 to v1
-			float edge_v0_to_v1_normal_x =   triangle[1].position.y - triangle[0].position.y;
-			float edge_v0_to_v1_normal_y = -(triangle[1].position.x - triangle[0].position.x);
-			float edge_v0_to_v1_c =
-				// -N dot edge_start_vertex
-				  (-edge_v0_to_v1_normal_x * triangle[0].position.x)
-				+ (-edge_v0_to_v1_normal_y * triangle[0].position.y);
-
-			// edge v1 to v2
-			float edge_v1_to_v2_normal_x =   triangle[2].position.y - triangle[1].position.y;
-			float edge_v1_to_v2_normal_y = -(triangle[2].position.x - triangle[1].position.x);
-			float edge_v1_to_v2_c =
-				  (-edge_v1_to_v2_normal_x * triangle[1].position.x)
-				+ (-edge_v1_to_v2_normal_y * triangle[1].position.y);
-
-			// edge v2 to v0
-			float edge_v2_to_v0_normal_x =   triangle[0].position.y - triangle[2].position.y;
-			float edge_v2_to_v0_normal_y = -(triangle[0].position.x - triangle[2].position.x);
-			float edge_v2_to_v0_c =
-				  (-edge_v2_to_v0_normal_x * triangle[2].position.x)
-				+ (-edge_v2_to_v0_normal_y * triangle[2].position.y);
-
-			// NOTE(mal): The barycentric weight for a given vertex in the triangle is related to
-			// the area of the subtriangle defined by the test point p and the edge OPPOSITE the
-			// given vertex.
-			//
-			// NOTE(mal): Avoiding per-pixel edge function computation. This should be possible because the
-			// edge function is linear. Thus,
-			// E(x + 1, y) = E(x, y) + dY
-			// E(x, y + 1) = E(x, y) - dX
-			// https://www.cs.drexel.edu/~deb39/Classes/Papers/comp175-06-pineda.pdf
-			// Taking the algorithm for stepping from here: https://www.youtube.com/watch?v=k5wtuKWmV48
-			// at chapter "Avoiding Computing the Edge Function Per-Pixel".
-
-			// Edge v1_v2
-			float d_w0_col = edge_v1_to_v2_normal_x;
-			float d_w0_row = edge_v1_to_v2_normal_y;
-			Vec2 raster_tile_offset_edge_v1_to_v2 = {
-				.x = edge_v1_to_v2_normal_x < 0 ? 0 : RASTER_TILE_WIDTH,
-				.y = edge_v1_to_v2_normal_y < 0 ? 0 : RASTER_TILE_HEIGHT
-			};
-
-			// Edge v2_v0
-			float d_w1_col = edge_v2_to_v0_normal_x;
-			float d_w1_row = edge_v2_to_v0_normal_y;
-			Vec2 raster_tile_offset_edge_v2_to_v0 = {
-				.x = edge_v2_to_v0_normal_x < 0 ? 0 : RASTER_TILE_WIDTH,
-				.y = edge_v2_to_v0_normal_y < 0 ? 0 : RASTER_TILE_HEIGHT
-			};
-
-			// Edge v0_v1
-			float d_w2_col = edge_v0_to_v1_normal_x;
-			float d_w2_row = edge_v0_to_v1_normal_y;
-			Vec2 raster_tile_offset_edge_v0_to_v1 = {
-				.x = edge_v0_to_v1_normal_x < 0 ? 0 : RASTER_TILE_WIDTH,
-				.y = edge_v0_to_v1_normal_y < 0 ? 0 : RASTER_TILE_HEIGHT
-			};
-
-			//////////////////////////////
-			// RASTERIZATION (TILED)
-			//////////////////////////////
-			// TODO(mal): For future optimization, might be able to add another layer of tiling and
-			// then apply vectorization.
-			// See https://www.cs.cmu.edu/afs/cs/academic/class/15869-f11/www/readings/abrash09_lrbrast.pdf
-			//     ^^^ Michael Abrash on the Larabee rasterizer.
-			// It also has a great (implicit) explanation of what our barycentric weight deltas
-			// actually are. (If I understand right, those values are just the amounts that the
-			// edge function changes when stepping by some amount in the given direction (i.e.
-			// +row, +col)).
-
-			for (
-				int raster_tile_topleft_y = topleft_raster_tile_topleft_y;
-				raster_tile_topleft_y <= bottomright_raster_tile_topleft_y;
-				raster_tile_topleft_y += RASTER_TILE_HEIGHT
-			)
-			{
-				for (
-					int raster_tile_topleft_x = topleft_raster_tile_topleft_x;
-					raster_tile_topleft_x <= bottomright_raster_tile_topleft_x;
-					raster_tile_topleft_x += RASTER_TILE_WIDTH
-				)
-				{
-					int is_tile_inside_v1_v2 = edge_function_2(
-						edge_v1_to_v2_normal_x, edge_v1_to_v2_normal_y,
-						raster_tile_topleft_x + raster_tile_offset_edge_v1_to_v2.x,
-						raster_tile_topleft_y + raster_tile_offset_edge_v1_to_v2.y,
-						edge_v1_to_v2_c
-					) >= 0;
-
-					int is_tile_inside_v2_v0 = edge_function_2(
-						edge_v2_to_v0_normal_x, edge_v2_to_v0_normal_y,
-						raster_tile_topleft_x + raster_tile_offset_edge_v2_to_v0.x,
-						raster_tile_topleft_y + raster_tile_offset_edge_v2_to_v0.y,
-						edge_v2_to_v0_c
-					) >= 0;
-
-					int is_tile_inside_v0_v1 = edge_function_2(
-						edge_v0_to_v1_normal_x, edge_v0_to_v1_normal_y,
-						raster_tile_topleft_x + raster_tile_offset_edge_v0_to_v1.x,
-						raster_tile_topleft_y + raster_tile_offset_edge_v0_to_v1.y,
-						edge_v0_to_v1_c
-					) >= 0;
-
-					if (is_tile_inside_v1_v2 && is_tile_inside_v2_v0 && is_tile_inside_v0_v1) {
-						float w0_row = edge_function_2(
-							edge_v1_to_v2_normal_x, edge_v1_to_v2_normal_y,
-							raster_tile_topleft_x + 0.5f, raster_tile_topleft_y + 0.5f,
-							edge_v1_to_v2_c
-						);
-						float w1_row = edge_function_2(
-							edge_v2_to_v0_normal_x, edge_v2_to_v0_normal_y,
-							raster_tile_topleft_x + 0.5f, raster_tile_topleft_y + 0.5f,
-							edge_v2_to_v0_c
-						);
-						float w2_row = edge_function_2(
-							edge_v0_to_v1_normal_x, edge_v0_to_v1_normal_y,
-							raster_tile_topleft_x + 0.5f, raster_tile_topleft_y + 0.5f,
-							edge_v0_to_v1_c
-						);
-
-						int raster_tile_min_x = raster_tile_topleft_x;
-						int raster_tile_max_x = raster_tile_min_x + RASTER_TILE_WIDTH;
-						if (raster_tile_max_x >= offscreen_buffer->width) raster_tile_max_x = offscreen_buffer->width;
-
-						int raster_tile_min_y = raster_tile_topleft_y;
-						int raster_tile_max_y = raster_tile_min_y + RASTER_TILE_HEIGHT;
-						if (raster_tile_max_y >= offscreen_buffer->height) raster_tile_max_y = offscreen_buffer->height;
-
-						// Loop over the pixels in the tile
-						for (int row = raster_tile_min_y; row < raster_tile_max_y; row++) {
-							float w0 = w0_row;
-							float w1 = w1_row;
-							float w2 = w2_row;
-							for (int col = raster_tile_min_x; col < raster_tile_max_x; col++) {
-								if (w0 >= 0 && w1 >= 0 && w2 >= 0) {
-									// TODO(mal): Rename some of this stuff. Names are taken from Realtime
-									// Rendering. See p1000 for perspective-correct barycentric interpolation.
-									// I believe here we're essentially foreshortening our barycentric coordinates.
-									float f0 = w0 * reciprocal_depth[0];
-									float f1 = w1 * reciprocal_depth[1];
-									float f2 = w2 * reciprocal_depth[2];
-									float perspective_reciprocal_area = 1.0f / (f0 + f1 + f2);
-
-									// TEXTURING
-									float tx_u = (f0 * triangle[0].tx_u + f1 * triangle[1].tx_u + f2 * triangle[2].tx_u) * perspective_reciprocal_area;
-									float tx_v = (f0 * triangle[0].tx_v + f1 * triangle[1].tx_v + f2 * triangle[2].tx_v) * perspective_reciprocal_area;
-									unsigned tx_x = (unsigned)(tx_u * game_state->texture_width);
-									unsigned tx_y = (unsigned)(tx_v * game_state->texture_height);
-									unsigned texel_index = tx_x + tx_y * game_state->texture_width;
-									// FIXME(mal): Need to detect machine's endianness and extract the bits
-									// properly. Check the 32-bit color format of TGA (or any other texture
-									// file we may load). I believe it's BGRA.
-									uint32_t texel_tga_color = game_state->texture_pixels[texel_index];
-									uint8_t  texel_red       = (texel_tga_color & 0x00FF0000) >> 16;
-									uint8_t  texel_green     = (texel_tga_color & 0x0000FF00) >> 8;
-									uint8_t  texel_blue      = texel_tga_color & 0x000000FF;
-									uint32_t texel_color     = (texel_red << 16) | (texel_green << 8) | texel_blue;
-									pixels[col + row * offscreen_buffer->width] = texel_color;
-
-									// #define U32_R8(x) (((x) & (0xFF << 16)) >> 16)
-									// #define U32_G8(x) (((x) & (0xFF << 8)) >> 8)
-									// #define U32_B8(x) ((x) & 0xFF)
-									// uint8_t color_red   = (f0 * U32_R8(vs[0].color) + f1 * U32_R8(vs[1].color) + f2 * U32_R8(vs[2].color)) * perspective_reciprocal_area;
-									// uint8_t color_green = (f0 * U32_G8(vs[0].color) + f1 * U32_G8(vs[1].color) + f2 * U32_G8(vs[2].color)) * perspective_reciprocal_area;
-									// uint8_t color_blue  = (f0 * U32_B8(vs[0].color) + f1 * U32_B8(vs[1].color) + f2 * U32_B8(vs[2].color)) * perspective_reciprocal_area;
-									// pixels[col + row * offscreen_buffer->width] =
-									// 	color_red << 16
-									// 	| color_green << 8
-									// 	| color_blue;
-
-								}
-
-								w0 += d_w0_col;
-								w1 += d_w1_col;
-								w2 += d_w2_col;
-							}
-
-							w0_row += d_w0_row;
-							w1_row += d_w1_row;
-							w2_row += d_w2_row;
-						}
-					}
+			uint32_t *pixel = &pixels[c + row_offset];
+			*pixel = CLEAR_COLOR;
+			if (game_state->render_raster_tile_state == RENDER_RASTER_TILES_BELOW) {
+				if (!(c & (RASTER_TILE_WIDTH - 1)) || !(r & (RASTER_TILE_HEIGHT - 1))) {
+					*pixel = RASTER_TILE_COLOR;
 				}
 			}
-
 		}
 	}
+
+	// FIXME(mal): Just construct/use/whatever a 4x4 transformation matrix for local_to_world
+	Vertex transformed_vertices[4]; // for the quad, will need to use dynamic mem management for
+									// actual stuff
+	{
+		float r = DEGREES_TO_RADIANS(game_state->rotation_y_degrees);
+		float sin_r = sin(r), cos_r = cos(r);
+		for (int v_i = 0; v_i < 4; v_i++) {
+			Vertex v = game_state->square.local_vertices[v_i];
+
+			// Scaling
+			for (int i = 0; i < 3; i++) v.position.elements[i] *= game_state->square.scale;
+			// Rotating about Y axis
+			float x = v.position.x, z = v.position.z;
+			v.position.x = z*sin_r + x*cos_r;
+			v.position.z = z*cos_r - x*sin_r;
+			// Translating
+			for (int i = 0; i < 3; i++) v.position.elements[i] += game_state->square.world_position.elements[i];
+			// world --> view --> homogeneous clip
+			v.position = mult_mat4x4_vec4(perspective, mult_mat4x4_vec4(world_to_camera, v.position));
+
+			transformed_vertices[v_i] = v;
+		}
+	}
+
+	//////////////////////////////
+	// BEGIN CLIPPING
+	//////////////////////////////
+	// Feed the entire polygon through the clipping pipeline rather
+	// than clipping individual triangles within the polygon.
+	// This will ensure that positions of vertices that create shared
+	// edges in the output triangle fan will always be identical, thus
+	// ensuring that no under- or over-draw will occur (provided our
+	// edge constant bias is set up properly).
+
+	// NOTE(mal): I believe that each plane can add at most one generated vertex, which means
+	// that if we start with 4 and clip against 6 frustum planes then we will end up with at
+	// most 10 vertices (TODO figure out number of triangles generated with 10 vertices in triangle
+	// fan configuration)
+	Vertex clip_buffer_a[10] = {
+		transformed_vertices[0],
+		transformed_vertices[1],
+		transformed_vertices[2],
+		transformed_vertices[3]
+	};
+	Vertex clip_buffer_b[10];
+	Vertex *input = clip_buffer_a;
+	Vertex *output = clip_buffer_b;
+	size_t input_count, output_count;
+	#define SWAP_POINTERS(Type, a, b) {\
+		Type *tmp = (a);\
+		(a) = (b);\
+		(b) = tmp;\
+	}
+
+	// clip against the six frustum planes
+	// NOTE(mal): See "Essential Math" 7.4.3 and 7.4.4 about clipping
+
+	// clip +x
+	input_count  = 4;
+	output_count = clip_sutherland_hodgeman(0, -1, input, input_count, output);
+	// clip -x
+	SWAP_POINTERS(Vertex, input, output);
+	input_count  = output_count;
+	output_count = clip_sutherland_hodgeman(0, +1, input, input_count, output);
+	// clip +y
+	SWAP_POINTERS(Vertex, input, output);
+	input_count  = output_count;
+	output_count = clip_sutherland_hodgeman(1, -1, input, input_count, output);
+	// clip -y
+	SWAP_POINTERS(Vertex, input, output);
+	input_count  = output_count;
+	output_count = clip_sutherland_hodgeman(1, +1, input, input_count, output);
+	// clip +z
+	SWAP_POINTERS(Vertex, input, output);
+	input_count  = output_count;
+	output_count = clip_sutherland_hodgeman(2, -1, input, input_count, output);
+	// clip -z
+	SWAP_POINTERS(Vertex, input, output);
+	input_count  = output_count;
+	output_count = clip_sutherland_hodgeman(2, +1, input, input_count, output);
+
+	Vertex *clipped_vertices     = output;
+	size_t  clipped_vertex_count = output_count;
+
+	//////////////////////////////
+	// END CLIPPING
+	//////////////////////////////
+
+	// Take all clipped vertices from homogeneous clip space --> NDC --> screen
+	// Retain depth values for each vertex.
+	// TODO(mal): Should we just store the depth on the vertex itself?
+	float outer_reciprocal_depth[clipped_vertex_count];
+	for (int i = 0; i < clipped_vertex_count; i++) {
+		// NOTE(mal): After perspective projection and before perspective divide, the w
+		// component IS our view-space Z (depth) coordinate!
+		float reciprocal_w = 1.0f / clipped_vertices[i].position.w;
+		outer_reciprocal_depth[i] = reciprocal_w;
+		// perspective divide: homogeneous clip --> NDC
+		clipped_vertices[i].position.x *= reciprocal_w;
+		clipped_vertices[i].position.y *= reciprocal_w;
+		clipped_vertices[i].position.z *= reciprocal_w;
+		clipped_vertices[i].position.w *= reciprocal_w;
+		// NDC --> screen
+		clipped_vertices[i].position = mult_mat4x4_vec4(ndc_to_screen, clipped_vertices[i].position);
+	}
+
+	size_t triangle_fan_center_index = 0;
+	for (int i = 2; i < clipped_vertex_count; i++) {
+		// Grab our triangle from the fan generated by clipping. Also fix the winding order that
+		// we're about to screw up by transforming from homogenous clip --> NDC --> screen.
+		// TODO(mal): Stop copying, but then also need to make sure that we don't update the
+		// same vertices over and over again with perspective divides!
+		// OR maybe just change the edge function to assume CCW order instead of CW? Then we
+		// don't have to change the order of our vertices here.
+		Vertex triangle[3] = { clipped_vertices[i], clipped_vertices[i - 1], clipped_vertices[triangle_fan_center_index] };
+		float reciprocal_depth[3] = { outer_reciprocal_depth[i], outer_reciprocal_depth[i - 1], outer_reciprocal_depth[triangle_fan_center_index] };
+
+		// Compute the AABB of the triangle so that we don't have to loop over the entire buffer
+		// every time regardless of the size of the triangle.
+		// TODO(mal): Maybe create to_vec3_max(Vec3 a, Vec3 b) and to_vec3_min(Vec3 a, Vec3 b)
+		// functions and call those here instead?
+		int triangle_xmax =
+			triangle[0].position.x > triangle[1].position.x
+			? (triangle[0].position.x > triangle[2].position.x ? triangle[0].position.x : triangle[2].position.x)
+			: (triangle[1].position.x > triangle[2].position.x ? triangle[1].position.x : triangle[2].position.x);
+		int triangle_xmin =
+			triangle[0].position.x < triangle[1].position.x
+			? (triangle[0].position.x < triangle[2].position.x ? triangle[0].position.x : triangle[2].position.x)
+			: (triangle[1].position.x < triangle[2].position.x ? triangle[1].position.x : triangle[2].position.x);
+		int triangle_ymax =
+			triangle[0].position.y > triangle[1].position.y
+			? (triangle[0].position.y > triangle[2].position.y ? triangle[0].position.y : triangle[2].position.y)
+			: (triangle[1].position.y > triangle[2].position.y ? triangle[1].position.y : triangle[2].position.y);
+		int triangle_ymin =
+			triangle[0].position.y < triangle[1].position.y
+			? (triangle[0].position.y < triangle[2].position.y ? triangle[0].position.y : triangle[2].position.y)
+			: (triangle[1].position.y < triangle[2].position.y ? triangle[1].position.y : triangle[2].position.y);
+
+		// if (triangle_xmin < 0) triangle_xmin = 0;
+		// if (triangle_xmax > offscreen_buffer->width) triangle_xmax = offscreen_buffer->width;
+		// if (triangle_ymin < 0) triangle_ymin = 0;
+		// if (triangle_ymax > offscreen_buffer->height) triangle_ymax = offscreen_buffer->height;
+
+		ASSERT(triangle_xmin >= 0);
+		ASSERT(triangle_xmax <= offscreen_buffer->width);
+		ASSERT(triangle_ymin >= 0);
+		ASSERT(triangle_ymax <= offscreen_buffer->height);
+
+		// NOTE(mal): Does NOT account for winding order so at the moment we always render even if
+		// the triange is facing away from us.
+		if (game_state->render_wireframe) {
+			draw_line_2d(
+				pixels, offscreen_buffer->width, offscreen_buffer->height,
+				triangle[0].position.x, triangle[0].position.y, triangle[1].position.x, triangle[1].position.y
+			);
+			draw_line_2d(
+				pixels, offscreen_buffer->width, offscreen_buffer->height,
+				triangle[1].position.x, triangle[1].position.y, triangle[2].position.x, triangle[2].position.y
+			);
+			draw_line_2d(
+				pixels, offscreen_buffer->width, offscreen_buffer->height,
+				triangle[2].position.x, triangle[2].position.y, triangle[0].position.x, triangle[0].position.y
+			);
+		}
+
+		if (game_state->skip_rasterization) {
+			continue;
+		}
+
+		//////////////////////////////
+		// TRIANGLE SETUP
+		//////////////////////////////
+
+		// Compute the topleft points of the tiles at the extremities
+		// (the topleft-most tile and the bottomright-most tile) of our
+		// triangle's AABB.
+		int bottomleft_tile_bottomleft_x = triangle_xmin - (triangle_xmin & (RASTER_TILE_WIDTH  - 1));
+		int bottomleft_tile_bottomleft_y = triangle_ymin - (triangle_ymin & (RASTER_TILE_HEIGHT - 1));
+		int topright_tile_bottomleft_x   = triangle_xmax - (triangle_xmax & (RASTER_TILE_WIDTH  - 1));
+		int topright_tile_bottomleft_y   = triangle_ymax - (triangle_ymax & (RASTER_TILE_HEIGHT - 1));
+
+		// TODO(mal): Set up for tiled rasterization
+		// https://fileadmin.cs.lth.se/graphics/research/papers/2005/cr/conservative.pdf
+		// Also see "Realtime Rendering" p996
+
+		// Setting up per-edge values
+		// NOTE(mal): The barycentric weight for a given vertex in the triangle is related to
+		// the area of the subtriangle defined by the test point p and the edge OPPOSITE the
+		// given vertex.
+		//
+		// NOTE(mal): Avoiding per-pixel edge function computation. This should be possible because the
+		// edge function is linear. Thus,
+		// E(x + 1, y) = E(x, y) + dY
+		// E(x, y + 1) = E(x, y) - dX
+		// https://www.cs.drexel.edu/~deb39/Classes/Papers/comp175-06-pineda.pdf
+		// Taking the algorithm for stepping from here: https://www.youtube.com/watch?v=k5wtuKWmV48
+		// at chapter "Avoiding Computing the Edge Function Per-Pixel".
+
+		// edge v0 to v1
+		float v0v1_nx =  (triangle[1].position.y - triangle[0].position.y);
+		float v0v1_ny = -(triangle[1].position.x - triangle[0].position.x);
+		float v0v1_c =
+			// -N dot edge_start_vertex
+			  (-v0v1_nx * triangle[0].position.x)
+			+ (-v0v1_ny * triangle[0].position.y)
+			+ bottom_right_bias(v0v1_nx, v0v1_ny);
+		float d_w2_col = v0v1_nx;
+		float d_w2_row = v0v1_ny;
+		Vec2 tile_offset_most_inside_v0v1 = {
+			.x = v0v1_nx < 0.0f ? 0.0f : RASTER_TILE_WIDTH,
+			.y = v0v1_ny < 0.0f ? 0.0f : RASTER_TILE_HEIGHT
+		};
+		Vec2 tile_offset_most_outside_v0v1 = {
+			.x = v0v1_nx < 0.0f ? RASTER_TILE_WIDTH : 0.0f,
+			.y = v0v1_ny < 0.0f ? RASTER_TILE_HEIGHT : 0.0f,
+		};
+
+		// edge v1 to v2
+		float v1v2_nx =  (triangle[2].position.y - triangle[1].position.y);
+		float v1v2_ny = -(triangle[2].position.x - triangle[1].position.x);
+		float v1v2_c =
+			  (-v1v2_nx * triangle[1].position.x)
+			+ (-v1v2_ny * triangle[1].position.y)
+			+ bottom_right_bias(v1v2_nx, v1v2_ny);
+		float d_w0_col = v1v2_nx;
+		float d_w0_row = v1v2_ny;
+		Vec2 tile_offset_most_inside_v1v2 = {
+			.x = v1v2_nx < 0.0f ? 0.0f : RASTER_TILE_WIDTH,
+			.y = v1v2_ny < 0.0f ? 0.0f : RASTER_TILE_HEIGHT
+		};
+		Vec2 tile_offset_most_outside_v1v2 = {
+			.x = v1v2_nx < 0.0f ? RASTER_TILE_WIDTH : 0.0f,
+			.y = v1v2_ny < 0.0f ? RASTER_TILE_HEIGHT : 0.0f,
+		};
+
+		// edge v2 to v0
+		float v2v0_nx =  (triangle[0].position.y - triangle[2].position.y);
+		float v2v0_ny = -(triangle[0].position.x - triangle[2].position.x);
+		float v2v0_c =
+			  (-v2v0_nx * triangle[2].position.x)
+			+ (-v2v0_ny * triangle[2].position.y)
+			+ bottom_right_bias(v2v0_nx, v2v0_ny);
+		float d_w1_col = v2v0_nx;
+		float d_w1_row = v2v0_ny;
+		Vec2 tile_offset_most_inside_v2v0 = {
+			.x = v2v0_nx < 0.0f ? 0.0f : RASTER_TILE_WIDTH,
+			.y = v2v0_ny < 0.0f ? 0.0f : RASTER_TILE_HEIGHT
+		};
+		Vec2 tile_offset_most_outside_v2v0 = {
+			.x = v2v0_nx < 0.0f ? RASTER_TILE_WIDTH : 0.0f,
+			.y = v2v0_ny < 0.0f ? RASTER_TILE_HEIGHT : 0.0f,
+		};
+
+		//////////////////////////////
+		// RASTERIZATION (TILED)
+		//////////////////////////////
+		// TODO(mal): For future optimization, might be able to add another layer of tiling and
+		// then apply vectorization.
+		// See https://www.cs.cmu.edu/afs/cs/academic/class/15869-f11/www/readings/abrash09_lrbrast.pdf
+		//     ^^^ Michael Abrash on the Larabee rasterizer.
+		// It also has a great (implicit) explanation of what our barycentric weight deltas
+		// actually are. (If I understand right, those values are just the amounts that the
+		// edge function changes when stepping by some amount in the given direction (i.e.
+		// +row, +col)).
+
+		for (
+			int tile_min_y = bottomleft_tile_bottomleft_y;
+			tile_min_y <= topright_tile_bottomleft_y;
+			tile_min_y += RASTER_TILE_HEIGHT
+		)
+		{
+			for (
+				int tile_min_x = bottomleft_tile_bottomleft_x;
+				tile_min_x <= topright_tile_bottomleft_x;
+				tile_min_x += RASTER_TILE_WIDTH
+			)
+			{
+
+				bool is_tile_fully_outside_v0v1 = edge_function_2(
+					v0v1_nx, v0v1_ny,
+					tile_min_x + tile_offset_most_inside_v0v1.x,
+					tile_min_y + tile_offset_most_inside_v0v1.y,
+					v0v1_c
+				) < 0.0f;
+				bool is_tile_fully_outside_v1v2 = edge_function_2(
+					v1v2_nx, v1v2_ny,
+					tile_min_x + tile_offset_most_inside_v1v2.x,
+					tile_min_y + tile_offset_most_inside_v1v2.y,
+					v1v2_c
+				) < 0.0f;
+				bool is_tile_fully_outside_v2v0 = edge_function_2(
+					v2v0_nx, v2v0_ny,
+					tile_min_x + tile_offset_most_inside_v2v0.x,
+					tile_min_y + tile_offset_most_inside_v2v0.y,
+					v2v0_c
+				) < 0.0f;
+				bool is_tile_fully_outside_triangle =
+					   is_tile_fully_outside_v0v1
+					|| is_tile_fully_outside_v1v2
+					|| is_tile_fully_outside_v2v0;
+				if (is_tile_fully_outside_triangle) {
+					continue;
+				}
+
+				// A tile is fully inside an edge if its most outside vertex is inside the edge.
+				bool is_tile_fully_inside_v0v1 = edge_function_2(
+					v0v1_nx, v0v1_ny,
+					tile_min_x + tile_offset_most_outside_v0v1.x,
+					tile_min_y + tile_offset_most_outside_v0v1.y,
+					v0v1_c
+				) >= 0.0f;
+				bool is_tile_fully_inside_v1v2 = edge_function_2(
+					v1v2_nx, v1v2_ny,
+					tile_min_x + tile_offset_most_outside_v1v2.x,
+					tile_min_y + tile_offset_most_outside_v1v2.y,
+					v1v2_c
+				) >= 0.0f;
+				bool is_tile_fully_inside_v2v0 = edge_function_2(
+					v2v0_nx, v2v0_ny,
+					tile_min_x + tile_offset_most_outside_v2v0.x,
+					tile_min_y + tile_offset_most_outside_v2v0.y,
+					v2v0_c
+				) >= 0.0f;
+				bool is_tile_fully_inside_triangle =
+					   is_tile_fully_inside_v0v1
+					&& is_tile_fully_inside_v1v2
+					&& is_tile_fully_inside_v2v0;
+
+				float w0_row = edge_function_2(
+					v1v2_nx, v1v2_ny,
+					tile_min_x + 0.5f, tile_min_y + 0.5f,
+					v1v2_c
+				);
+				float w1_row = edge_function_2(
+					v2v0_nx, v2v0_ny,
+					tile_min_x + 0.5f, tile_min_y + 0.5f,
+					v2v0_c
+				);
+				float w2_row = edge_function_2(
+					v0v1_nx, v0v1_ny,
+					tile_min_x + 0.5f, tile_min_y + 0.5f,
+					v0v1_c
+				);
+
+				int tile_max_x = tile_min_x + RASTER_TILE_WIDTH;
+				if (tile_max_x >= offscreen_buffer->width) tile_max_x = offscreen_buffer->width;
+				int tile_max_y = tile_min_y + RASTER_TILE_HEIGHT;
+				if (tile_max_y >= offscreen_buffer->height) tile_max_y = offscreen_buffer->height;
+
+				// Loop over the pixels in the tile
+				for (int row = tile_min_y; row < tile_max_y; row++) {
+					float w0 = w0_row;
+					float w1 = w1_row;
+					float w2 = w2_row;
+					for (int col = tile_min_x; col < tile_max_x; col++) {
+						// TODO(mal): two separate loops:
+						// - if tile fully inside triangle, no weight check
+						// - if partially inside, weight check
+						if (is_tile_fully_inside_triangle || (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f)) {
+							// TODO(mal): Rename some of this stuff. Names are taken from Realtime
+							// Rendering. See p1000 for perspective-correct barycentric interpolation.
+							// I believe here we're essentially foreshortening our barycentric coordinates.
+							float f0 = w0 * reciprocal_depth[0];
+							float f1 = w1 * reciprocal_depth[1];
+							float f2 = w2 * reciprocal_depth[2];
+							float perspective_reciprocal_area = 1.0f / (f0 + f1 + f2);
+
+							// TEXTURING
+							float tx_u = (f0 * triangle[0].tx_u + f1 * triangle[1].tx_u + f2 * triangle[2].tx_u) * perspective_reciprocal_area;
+							float tx_v = (f0 * triangle[0].tx_v + f1 * triangle[1].tx_v + f2 * triangle[2].tx_v) * perspective_reciprocal_area;
+							unsigned tx_x = (unsigned)(tx_u * game_state->texture_width);
+							unsigned tx_y = (unsigned)(tx_v * game_state->texture_height);
+							unsigned texel_index = tx_x + tx_y * game_state->texture_width;
+							// FIXME(mal): Need to detect machine's endianness and extract the bits
+							// properly. Check the 32-bit color format of TGA (or any other texture
+							// file we may load). I believe it's BGRA.
+							uint32_t texel_tga_color = game_state->texture_pixels[texel_index];
+							uint8_t  texel_red       = (texel_tga_color & 0x00FF0000) >> 16;
+							uint8_t  texel_green     = (texel_tga_color & 0x0000FF00) >> 8;
+							uint8_t  texel_blue      = texel_tga_color & 0x000000FF;
+							uint32_t texel_color     = (texel_red << 16) | (texel_green << 8) | texel_blue;
+							pixels[col + row * offscreen_buffer->width] = texel_color;
+
+							// #define U32_R8(x) (((x) & (0xFF << 16)) >> 16)
+							// #define U32_G8(x) (((x) & (0xFF << 8)) >> 8)
+							// #define U32_B8(x) ((x) & 0xFF)
+							// uint8_t color_red   = (f0 * U32_R8(vs[0].color) + f1 * U32_R8(vs[1].color) + f2 * U32_R8(vs[2].color)) * perspective_reciprocal_area;
+							// uint8_t color_green = (f0 * U32_G8(vs[0].color) + f1 * U32_G8(vs[1].color) + f2 * U32_G8(vs[2].color)) * perspective_reciprocal_area;
+							// uint8_t color_blue  = (f0 * U32_B8(vs[0].color) + f1 * U32_B8(vs[1].color) + f2 * U32_B8(vs[2].color)) * perspective_reciprocal_area;
+							// pixels[col + row * offscreen_buffer->width] =
+							// 	color_red << 16
+							// 	| color_green << 8
+							// 	| color_blue;
+
+						}
+
+						w0 += d_w0_col;
+						w1 += d_w1_col;
+						w2 += d_w2_col;
+					}
+
+					w0_row += d_w0_row;
+					w1_row += d_w1_row;
+					w2_row += d_w2_row;
+				}
+			}
+		}
+	}
+
+	if (game_state->render_raster_tile_state == RENDER_RASTER_TILES_ONTOP) {
+		// NOTE(mal): MUST be powers of 2!
+		for (int r = 0; r < offscreen_buffer->height; r++) {
+			const int row_offset = r * offscreen_buffer->width;
+			for (int c = 0; c < offscreen_buffer->width; c++) {
+				uint32_t *pixel = &pixels[c + row_offset];
+				if (!(c & (RASTER_TILE_WIDTH - 1)) || !(r & (RASTER_TILE_HEIGHT - 1))) {
+					*pixel = RASTER_TILE_COLOR;
+				}
+			}
+		}
+	}
+
 }
 
 EXPORT void game_update(GameMemory *memory, GameInput *input) {
@@ -1090,17 +1159,6 @@ EXPORT void game_update(GameMemory *memory, GameInput *input) {
 	game_state->square.scale = 10.0f;
 	game_state->square.world_position = (Vec3){ .z = game_state->square.scale * 2.0f };
 
-	// Defining the two triangles making up the square in CW-order
-	
-	// LEFT: 
-	game_state->square.vertex_list[0] = 0;
-	game_state->square.vertex_list[1] = 1;
-	game_state->square.vertex_list[2] = 2;
-	// RIGHT
-	game_state->square.vertex_list[3] = 2;
-	game_state->square.vertex_list[4] = 1;
-	game_state->square.vertex_list[5] = 3;
-
 	// Rotate
 	const float rot_speed = 1.0f;
 
@@ -1108,7 +1166,7 @@ EXPORT void game_update(GameMemory *memory, GameInput *input) {
 	if (input->keys[GAME_KEY_L].is_down) game_state->rotation_y_degrees -= rot_speed;
 
 	if (game_state->rotation_y_degrees > 180.0f) game_state->rotation_y_degrees -= 360.0f;
-	if (game_state->rotation_y_degrees < 180.0f) game_state->rotation_y_degrees += 360.0f;
+	if (game_state->rotation_y_degrees < -180.0f) game_state->rotation_y_degrees += 360.0f;
 
 	const float move_speed = 1.0f;
 
@@ -1117,6 +1175,26 @@ EXPORT void game_update(GameMemory *memory, GameInput *input) {
 	if (input->keys[GAME_KEY_A].is_down) game_state->camera_world_position.x -= move_speed;
 	if (input->keys[GAME_KEY_D].is_down) game_state->camera_world_position.x += move_speed;
 
-	if (input->keys[GAME_KEY_F1].is_down && !input->keys[GAME_KEY_F1].was_down)
+	#define PRESSED_THIS_FRAME(game_key) input->keys[(game_key)].is_down && !input->keys[(game_key)].was_down
+	if (PRESSED_THIS_FRAME(GAME_KEY_F1)) {
+		game_state->skip_rasterization = !game_state->skip_rasterization;
+	}
+	if (PRESSED_THIS_FRAME(GAME_KEY_F2)) {
 		game_state->render_wireframe = !game_state->render_wireframe;
+	}
+	if (PRESSED_THIS_FRAME(GAME_KEY_F3)) {
+		RenderRasterTileState next_state;
+		switch (game_state->render_raster_tile_state) {
+			case RENDER_RASTER_TILES_OFF:
+				next_state = RENDER_RASTER_TILES_BELOW;
+				break;
+			case RENDER_RASTER_TILES_BELOW:
+				next_state = RENDER_RASTER_TILES_ONTOP;
+				break;
+			case RENDER_RASTER_TILES_ONTOP:
+				next_state = RENDER_RASTER_TILES_OFF;
+				break;
+		}
+		game_state->render_raster_tile_state = next_state;
+	}
 }
