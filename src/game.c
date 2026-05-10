@@ -1074,16 +1074,16 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 				int tile_max_y = tile_min_y + RASTER_TILE_HEIGHT;
 				if (tile_max_y >= offscreen_buffer->height) tile_max_y = offscreen_buffer->height;
 
-				// Loop over the pixels in the tile
-				for (int row = tile_min_y; row < tile_max_y; row++) {
-					float w0 = w0_row;
-					float w1 = w1_row;
-					float w2 = w2_row;
-					for (int col = tile_min_x; col < tile_max_x; col++) {
-						// TODO(mal): two separate loops:
-						// - if tile fully inside triangle, no weight check
-						// - if partially inside, weight check
-						if (is_tile_fully_inside_triangle || (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f)) {
+				// TODO(mal): Pull out pixel shading logic into a function
+				// Tried this before but there's some considerations about what should actually be
+				// passed in and how.
+				if (is_tile_fully_inside_triangle) {
+					// Loop over the pixels in the tile
+					for (int row = tile_min_y; row < tile_max_y; row++) {
+						float w0 = w0_row;
+						float w1 = w1_row;
+						float w2 = w2_row;
+						for (int col = tile_min_x; col < tile_max_x; col++) {
 							// TODO(mal): Rename some of this stuff. Names are taken from Realtime
 							// Rendering. See p1000 for perspective-correct barycentric interpolation.
 							// I believe here we're essentially foreshortening our barycentric coordinates.
@@ -1119,16 +1119,68 @@ EXPORT void game_render(GameMemory *memory, GameOffscreenBuffer *offscreen_buffe
 							// 	| color_green << 8
 							// 	| color_blue;
 
+							w0 += d_w0_col;
+							w1 += d_w1_col;
+							w2 += d_w2_col;
 						}
 
-						w0 += d_w0_col;
-						w1 += d_w1_col;
-						w2 += d_w2_col;
+						w0_row += d_w0_row;
+						w1_row += d_w1_row;
+						w2_row += d_w2_row;
 					}
+				} else {
+					// Loop over the pixels in the tile
+					for (int row = tile_min_y; row < tile_max_y; row++) {
+						float w0 = w0_row;
+						float w1 = w1_row;
+						float w2 = w2_row;
+						for (int col = tile_min_x; col < tile_max_x; col++) {
+							if (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f) {
+								// TODO(mal): Rename some of this stuff. Names are taken from Realtime
+								// Rendering. See p1000 for perspective-correct barycentric interpolation.
+								// I believe here we're essentially foreshortening our barycentric coordinates.
+								float f0 = w0 * reciprocal_depth[0];
+								float f1 = w1 * reciprocal_depth[1];
+								float f2 = w2 * reciprocal_depth[2];
+								float perspective_reciprocal_area = 1.0f / (f0 + f1 + f2);
 
-					w0_row += d_w0_row;
-					w1_row += d_w1_row;
-					w2_row += d_w2_row;
+								// TEXTURING
+								float tx_u = (f0 * triangle[0].tx_u + f1 * triangle[1].tx_u + f2 * triangle[2].tx_u) * perspective_reciprocal_area;
+								float tx_v = (f0 * triangle[0].tx_v + f1 * triangle[1].tx_v + f2 * triangle[2].tx_v) * perspective_reciprocal_area;
+								unsigned tx_x = (unsigned)(tx_u * game_state->texture_width);
+								unsigned tx_y = (unsigned)(tx_v * game_state->texture_height);
+								unsigned texel_index = tx_x + tx_y * game_state->texture_width;
+								// FIXME(mal): Need to detect machine's endianness and extract the bits
+								// properly. Check the 32-bit color format of TGA (or any other texture
+								// file we may load). I believe it's BGRA.
+								uint32_t texel_tga_color = game_state->texture_pixels[texel_index];
+								uint8_t  texel_red       = (texel_tga_color & 0x00FF0000) >> 16;
+								uint8_t  texel_green     = (texel_tga_color & 0x0000FF00) >> 8;
+								uint8_t  texel_blue      = texel_tga_color & 0x000000FF;
+								uint32_t texel_color     = (texel_red << 16) | (texel_green << 8) | texel_blue;
+								pixels[col + row * offscreen_buffer->width] = texel_color;
+
+								// #define U32_R8(x) (((x) & (0xFF << 16)) >> 16)
+								// #define U32_G8(x) (((x) & (0xFE << 8)) >> 8)
+								// #define U32_B8(x) ((x) & 0xFF)
+								// uint8_t color_red   = (f0 * U32_R8(vs[0].color) + f1 * U32_R8(vs[1].color) + f2 * U32_R8(vs[2].color)) * perspective_reciprocal_area;
+								// uint8_t color_green = (f0 * U32_G8(vs[0].color) + f1 * U32_G8(vs[1].color) + f2 * U32_G8(vs[2].color)) * perspective_reciprocal_area;
+								// uint8_t color_blue  = (f0 * U32_B8(vs[0].color) + f1 * U32_B8(vs[1].color) + f2 * U32_B8(vs[2].color)) * perspective_reciprocal_area;
+								// pixels[col + row * offscreen_buffer->width] =
+								// 	color_red << 16
+								// 	| color_green << 8
+								// 	| color_blue;
+							}
+
+							w0 += d_w0_col;
+							w1 += d_w1_col;
+							w2 += d_w2_col;
+						}
+
+						w0_row += d_w0_row;
+						w1_row += d_w1_row;
+						w2_row += d_w2_row;
+					}
 				}
 			}
 		}
